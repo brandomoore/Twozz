@@ -590,6 +590,15 @@ def summarize_session(
                 rates[f"{name}_per_hour"] = value / hours
 
     hypotheses: list[str] = []
+    stall_notifications = event_counts["avplayer_stall_notification"]
+    native_stalls = counter_totals.get("avplayer_stalls", 0)
+    if stall_notifications or native_stalls:
+        hypotheses.append(
+            f"AVPlayer reported {stall_notifications} stall notification(s) and "
+            f"{native_stalls} cumulative-counter stall(s). These are separate observations "
+            "of potentially overlapping interruptions, not an additive total. Short repeated "
+            "hiccups can occur even when no clock-based stall episode reaches four seconds."
+        )
     if stalls_by_kind["network_or_buffer"]:
         hypotheses.append(
             "Low-buffer/network-classified waits support a delivery or buffering hypothesis, "
@@ -658,6 +667,7 @@ def summarize_session(
             "records_by_kind": dict(sorted(kind_counts.items())),
             "events_by_name": dict(sorted(event_counts.items())),
             "stall_episodes": len(stall_starts),
+            "stall_notifications": stall_notifications,
             "stalls_by_kind": dict(sorted(stalls_by_kind.items())),
             "stall_outcomes": dict(sorted(stall_outcomes.items())),
             "stream_errors": len(stream_errors),
@@ -679,6 +689,9 @@ def summarize_session(
         "interpretation_notes": [
             "Stalls are counted only from explicit stall_started events; loading, pause, seek, "
             "background, recovery, idle, and offline flags are not reclassified as stalls.",
+            "Stall notifications and reset-aware AVPlayer stall-counter deltas are reported "
+            "separately from clock-classified episodes. Zero episodes does not mean uninterrupted "
+            "playback; repeated short hiccups can fall below the four-second clock threshold.",
             "A telemetry_records_dropped counter is attached to the next admitted record. "
             "Sequence gaps are additional evidence of missing records.",
             "Proxy timing covers playlist/master requests only. AVPlayer fetches media segments "
@@ -775,7 +788,8 @@ def print_text(report: dict[str, Any]) -> None:
         )
         counts = session["counts"]
         print(
-            f"  Records: {counts['records']}  Stalls: {counts['stall_episodes']}  "
+            f"  Records: {counts['records']}  Stall episodes: {counts['stall_episodes']}  "
+            f"Stall notifications: {counts['stall_notifications']}  "
             f"Stream errors: {counts['stream_errors']}  "
             f"Controller interventions: {counts['controller_interventions']}"
         )

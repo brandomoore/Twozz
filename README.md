@@ -163,7 +163,9 @@ and sanitized failure category, never visitor context or response bodies. Public
 viewing timestamps do appear. The tool reads locally and never uploads logs.
 
 YouTube simulcasts use the native-HLS client shared with YouTube-only playback
-and captions. The obsolete Android VR client and silent web-manifest fallback
+and captions. Startup respects AVPlayer's native buffering wait; a stall
+notification does not force an empty-buffer YouTube item to restart immediately.
+The obsolete Android VR client and silent web-manifest fallback
 are not used. A terminal media error (even when the item still reports ready),
 or 20 seconds without clock progress while playback is intended, triggers one
 fresh YouTube resolution. Automatic attempts are at least 10 seconds apart.
@@ -182,6 +184,10 @@ partial tail are treated as baselines, so its counter deltas are lower bounds.
 `recovery_completed` describes the recovery task returning
 (`load_returned`, `load_failed`, or `offline`); later clock/frame progress is the
 health evidence. `first_clock_progress` confirms clock movement.
+Stall notifications and AVPlayer's reset-aware stall counter are reported
+separately from clock-classified episodes, not added together. Repeated short
+hiccups can fall below the four-second clock threshold, so zero classified
+episodes does not mean playback was uninterrupted.
 `first_video_output_frame` is currently native-Twitch-only, may be up to one
 watchdog interval late, and records an observed pixel buffer rather than proof
 that a picture was rendered on screen. A seek callback arriving after the

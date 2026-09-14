@@ -406,8 +406,18 @@ extension PlayerView {
 
   func startPlayback() {
     didRequestPlayback = true
-    recordPlaybackEvent("play_requested", metrics: ["rate": 1.0])
-    player.playImmediately(atRate: 1.0)
+    recordPlaybackEvent(
+      "play_requested",
+      attributes: ["start_policy": isUsingAltSource ? "native_buffering" : "immediate"],
+      metrics: ["rate": 1.0]
+    )
+    if isUsingAltSource {
+      // Native HLS must be allowed to build its own startup/rebuffer cushion.
+      // playImmediately bypasses automaticallyWaitsToMinimizeStalling.
+      player.play()
+    } else {
+      player.playImmediately(atRate: 1.0)
+    }
   }
 
   func startLatencyMonitor() {

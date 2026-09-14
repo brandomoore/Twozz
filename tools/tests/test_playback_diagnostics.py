@@ -202,6 +202,41 @@ class PlaybackDiagnosticsTests(unittest.TestCase):
         self.assertEqual(session["counter_deltas"]["proxy_requests"], 12)
         self.assertEqual(session["counts"]["controller_interventions"], 1)
 
+    def test_short_stalls_are_visible_without_clock_classified_episodes(self):
+        records = [
+            self.record(self.session_one, 1, kind="event", name="session_started"),
+            self.record(self.session_one, 2, counters={"avplayer_stalls": 0}),
+            self.record(self.session_one, 3, kind="event", name="avplayer_stall_notification"),
+            self.record(self.session_one, 4, kind="event", name="avplayer_stall_notification"),
+            self.record(self.session_one, 5, counters={"avplayer_stalls": 2}),
+        ]
+        path = self.write_records(f"playback-{self.session_one}-0001.jsonl", records)
+        session = playback_diagnostics.analyze(path)["sessions"][0]
+        self.assertEqual(session["counts"]["stall_episodes"], 0)
+        self.assertEqual(session["counts"]["stall_notifications"], 2)
+        self.assertEqual(session["counter_deltas"]["avplayer_stalls"], 2)
+        self.assertTrue(any("Short repeated hiccups" in hint for hint in session["hypotheses"]))
+        self.assertTrue(any("not an additive total" in hint for hint in session["hypotheses"]))
+
+    def test_native_counter_alone_surfaces_short_stalls(self):
+        records = [
+            self.record(self.session_one, 1, kind="event", name="session_started"),
+            self.record(self.session_one, 2, counters={"avplayer_stalls": 3}),
+        ]
+        path = self.write_records(f"playback-{self.session_one}-0001.jsonl", records)
+        session = playback_diagnostics.analyze(path)["sessions"][0]
+        self.assertEqual(session["counts"]["stall_notifications"], 0)
+        self.assertTrue(any("3 cumulative-counter stall(s)" in hint for hint in session["hypotheses"]))
+
+    def test_preserving_native_wait_is_not_a_recovery_intervention(self):
+        records = [
+            self.record(self.session_one, 1, kind="event", name="native_buffer_wait_preserved"),
+            self.record(self.session_one, 2, kind="event", name="playback_nudged"),
+        ]
+        path = self.write_records(f"playback-{self.session_one}-0001.jsonl", records)
+        session = playback_diagnostics.analyze(path)["sessions"][0]
+        self.assertEqual(session["counts"]["controller_interventions"], 1)
+
     def test_rates_use_retained_window_and_do_not_double_weight_access_logs(self):
         sample = self.record(self.session_one, 3, counters={"proxy_requests": 100})
         sample["metrics"] = {"observed_bitrate_bps": 1_000}

@@ -165,7 +165,8 @@ extension PlayerView {
       guard let stalledItem = notification.object as? AVPlayerItem else { return }
       guard stalledItem == player.currentItem else { return }
       // Ignore stalls while intentionally paused or scrubbing for DVR rewind.
-      guard !isUserPaused, !isScrubbing else { return }
+      guard !isUserPaused, !isScrubbing, !isSleeping, backgroundedAt == nil,
+        channelPageTarget == nil else { return }
       recordPlaybackEvent(
         "avplayer_stall_notification",
         level: .warning,
@@ -180,10 +181,27 @@ extension PlayerView {
       else { return }
       lastStallNotificationAt = now
       markDiagnosticsStall(reason: "AVPlayerItemPlaybackStalled")
+      // Do not force a starved YouTube item to play its last fraction of a
+      // second and stall again. Its native buffering wait and bounded alternate
+      // recovery own this path, not the Twitch-specific immediate nudge.
+      if isUsingAltSource {
+        recordPlaybackEvent(
+          "native_buffer_wait_preserved",
+          attributes: ["reason": "alternate_source_stall"],
+          metrics: ["buffer_ahead_seconds": bufferAheadSeconds(stalledItem) ?? -1]
+        )
+        return
+      }
       // Re-kick immediately. With automaticallyWaitsToMinimizeStalling the player
       // usually self-resumes once buffered, but an explicit nudge shortens the
       // gap and helps the player that has stalled without auto-resuming.
       player.playImmediately(atRate: 1.0)
+      recordPlaybackEvent(
+        "playback_nudged",
+        level: .warning,
+        attributes: ["reason": "stall_notification"],
+        metrics: ["buffer_ahead_seconds": bufferAheadSeconds(stalledItem) ?? -1]
+      )
     }
     .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)) {
       notification in
