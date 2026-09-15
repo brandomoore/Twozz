@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/thatcube/brando/main/logos/twozz.svg" alt="Twozz logo" width="128" />
+  <img src="Branding/twozz_logo.svg" alt="Twozz logo" width="128" />
 </p>
 
 <h1 align="center">Twozz</h1>
@@ -111,6 +111,21 @@ Build instructions, the Twitch auth setup, how playback is resolved, versioning,
 and release steps all live in **[CONTRIBUTING.md](CONTRIBUTING.md)**. Notes on
 the low-latency playback work are in
 [`docs/low-latency.md`](docs/low-latency.md).
+
+### Brand assets
+
+`Branding/twozz_logo.svg` is the canonical Twozz mark. The in-app SVG and
+transparent splash artwork use it unchanged; the layered tvOS icons and static
+Top Shelf images pair it with charcoal (`#1C1C1E`) and a subtle purple radial
+glow. The background follows Plozz's smooth treatment, without grain or static.
+
+To regenerate all catalog variants while preserving their dimensions and layers:
+
+```bash
+python3 -m pip install -r tools/requirements-brand-assets.txt
+python3 tools/generate_brand_assets.py
+python3 -m unittest discover -s tools/tests -p 'test_brand_assets.py'
+```
 
 ### Playback diagnostics
 

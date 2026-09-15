@@ -1,5 +1,5 @@
 <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
-<g clip-path="url(#clip0_64_536)">
+<g clip-path="url(#clip0_911_1255)">
 <rect x="7" y="25" width="1" height="5" fill="black"/>
 <rect x="8" y="29" width="2" height="1" fill="black"/>
 <rect x="10" y="28" width="1" height="1" fill="black"/>
@@ -35,7 +35,6 @@
 <rect x="8" y="28" width="2" height="1" fill="#7243C3"/>
 <rect x="8" y="24" width="1" height="4" fill="#7243C3"/>
 <rect x="7" y="24" width="1" height="1" fill="#7243C3"/>
-<path d="M4 9V8V7H5V6V5H6H7V4H8H24H25V5H26H27V6V7H28V8V9H29V18H28V20V21H27V22V23H26V24H25H12V25H11V26H10V27H9V26V24H7V23H6H5V22V21H4V19H3L3 9H4Z" fill="#8F52F6"/>
 <rect x="3" y="7" width="1" height="2" fill="#AD84EC"/>
 <rect x="4" y="5" width="1" height="2" fill="#AD84EC"/>
 <rect x="5" y="4" width="2" height="1" fill="#AD84EC"/>
@@ -44,28 +43,21 @@
 <rect x="27" y="5" width="1" height="1" fill="#AD84EC"/>
 <rect x="27" y="6" width="1" height="1" fill="#AD84EC"/>
 <rect x="28" y="7" width="1" height="3" fill="#AD84EC"/>
-<rect x="10" y="8" width="5" height="1" fill="black"/>
-<rect x="13" y="9" width="2" height="1" fill="black"/>
-<rect x="12" y="10" width="2" height="1" fill="black"/>
-<rect x="11" y="11" width="2" height="1" fill="black"/>
-<rect x="10" y="12" width="2" height="1" fill="black"/>
-<rect x="10" y="13" width="5" height="1" fill="black"/>
-<rect x="17" y="8" width="5" height="1" fill="black"/>
-<rect x="20" y="9" width="2" height="1" fill="black"/>
-<rect x="19" y="10" width="2" height="1" fill="black"/>
-<rect x="18" y="11" width="2" height="1" fill="black"/>
-<rect x="17" y="12" width="2" height="1" fill="black"/>
-<rect x="17" y="13" width="5" height="1" fill="black"/>
-<rect x="11" y="16" width="1" height="2" fill="black"/>
-<rect x="12" y="17" width="1" height="2" fill="black"/>
-<rect x="13" y="18" width="1" height="2" fill="black"/>
-<rect x="18" y="18" width="1" height="2" fill="black"/>
-<rect x="19" y="17" width="1" height="2" fill="black"/>
-<rect x="20" y="16" width="1" height="2" fill="black"/>
-<rect x="14" y="19" width="4" height="1" fill="black"/>
+<path d="M4 9V8V7H5V6V5H6H7V4H8H24H25V5H26H27V6V7H28V8V9H29V18H28V20V21H27V22V23H26V24H25H12V25H11V26H10V27H9V26V24H7V23H6H5V22V21H4V19H3L3 9H4Z" fill="#8F52F6"/>
+<path d="M12 10H15V11H12V10Z" fill="white"/>
+<path d="M17 10H20V11H17V10Z" fill="white"/>
+<path d="M13 11H15V12H13V11Z" fill="white"/>
+<path d="M18 11H20V12H18V11Z" fill="white"/>
+<path d="M12 12H14V13H12V12Z" fill="white"/>
+<path d="M17 12H19V13H17V12Z" fill="white"/>
+<path d="M12 13H15V14H12V13Z" fill="white"/>
+<path d="M17 13H20V14H17V13Z" fill="white"/>
+<path d="M13 16H14V17H13V16Z" fill="white"/>
+<path d="M18 16H19V17H18V16Z" fill="white"/>
+<path d="M14 17H18V18H14V17Z" fill="white"/>
 </g>
 <defs>
-<clipPath id="clip0_64_536">
+<clipPath id="clip0_911_1255">
 <rect width="28" height="28" fill="white" transform="translate(2 2)"/>
 </clipPath>
 </defs>
