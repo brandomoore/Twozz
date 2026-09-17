@@ -53,8 +53,10 @@ final class AppEnvironment {
   let nightShift = NightShiftManager()
   /// Watches followed channels for "just went live" toasts.
   let goLive = GoLiveWatcher()
-  /// Per-channel go-live notification opt-outs.
+  /// Explicit go-live notification opt-in and channel selections.
   let goLiveSettings = GoLiveNotificationSettings()
 
-  init() {}
+  init() {
+    goLive.notificationSettings = goLiveSettings
+  }
 }

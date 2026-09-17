@@ -3,14 +3,11 @@ import SwiftUI
 /// Settings sub-page: choose which followed channels surface the in-app
 /// "just went live" toast.
 ///
-/// Opt-out model — every followed channel alerts by default, and the viewer
-/// toggles off the ones they don't want. tvOS has no system notifications, so
-/// these alerts are *in-app on this Apple TV* only and don't change the viewer's
-/// Twitch notifications on other devices (explained on the parent Settings row).
+/// Opt-in model: start empty, enable all, or choose individual channels.
+/// Leaving All snapshots current follows; new follows then remain off.
 ///
 /// This is a second-level detail page, so it hides the top tab bar and presents
-/// as a focused full-screen list. The master Go Live Alerts on/off lives on the
-/// parent Settings row, not here — this page is just the per-channel picker.
+/// as a focused full-screen list.
 struct GoLiveAlertsSettingsView: View {
   var follows: FollowedChannelsService
   let settings: GoLiveNotificationSettings
@@ -59,7 +56,10 @@ struct GoLiveAlertsSettingsView: View {
       placement: .automatic,
       prompt: "Search channels"
     )
-    .task { await follows.loadDirectory(using: auth) }
+    .task {
+      settings.beginChoosingChannels()
+      await follows.loadDirectory(using: auth, force: true)
+    }
   }
 
   /// Whether a search query is currently narrowing the list.
@@ -74,37 +74,43 @@ struct GoLiveAlertsSettingsView: View {
     filteredBroadcasters
   }
 
-  /// Context-aware bulk action: if every visible channel is already on, the
-  /// action mutes them ("Disable All"); if any visible channel is off, it
-  /// unmutes them all ("Enable All"). `nil` when there's nothing to act on.
-  private var bulkEnables: Bool? {
-    guard !bulkTargets.isEmpty else { return nil }
-    let anyMuted = bulkTargets.contains { settings.isMuted(login: $0.login) }
-    return anyMuted
-  }
-
-  /// Compact, secondary-styled action shown at the top-right of the channels
-  /// section header (the small list-level action pattern, not a giant row).
-  /// Reading `settings.isMuted` via `bulkEnables` registers an observation so
-  /// the label flips as toggles change.
+  /// Enabling all visible rows manually never silently opts into future follows.
+  /// Only the explicitly named Enable All action selects the All policy.
   @ViewBuilder
   private var bulkActionButton: some View {
-    if let enables = bulkEnables {
-      Button {
-        settings.setAlerting(enables, logins: bulkTargets.map(\.login))
-      } label: {
-        Text(enables ? "Enable All" : "Disable All")
-          .font(.caption)
+    if isSearching {
+      Button("Enable Matches") {
+        settings.setAlerting(true, logins: bulkTargets.map(\.login), followedLogins: broadcasters.map(\.login))
       }
       .buttonStyle(.plain)
       .foregroundStyle(.tint)
+      .disabled(bulkTargets.isEmpty || follows.isLoadingDirectory || follows.directoryErrorMessage != nil)
+      Button("Disable Matches") {
+        settings.setAlerting(false, logins: bulkTargets.map(\.login), followedLogins: broadcasters.map(\.login))
+      }
+      .buttonStyle(.plain)
+      .foregroundStyle(.tint)
+      .disabled(bulkTargets.isEmpty || follows.isLoadingDirectory || follows.directoryErrorMessage != nil)
+    } else {
+      Button("Enable All") { settings.enableAll() }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
+      Button("Disable All") { settings.disableAll() }
+        .buttonStyle(.plain)
+        .foregroundStyle(.tint)
     }
   }
 
   @ViewBuilder
   private var channelsSection: some View {
     Section {
-      if broadcasters.isEmpty {
+      if let error = follows.directoryErrorMessage {
+        Text(error)
+          .foregroundStyle(.secondary)
+        Button("Retry") {
+          Task { await follows.loadDirectory(using: auth, force: true) }
+        }
+      } else if broadcasters.isEmpty {
         if follows.isLoadingDirectory {
           loadingState
         } else {
@@ -117,6 +123,7 @@ struct GoLiveAlertsSettingsView: View {
           Toggle(isOn: binding(for: channel)) {
             channelLabel(channel)
           }
+          .disabled(follows.isLoadingDirectory)
         }
       }
     } header: {
@@ -126,21 +133,24 @@ struct GoLiveAlertsSettingsView: View {
         bulkActionButton
       }
     } footer: {
-      if !broadcasters.isEmpty {
-        Text(footerText)
-          .font(.caption)
-          .foregroundStyle(.secondary)
-      }
+      Text(footerText)
+        .font(.caption)
+        .foregroundStyle(.secondary)
     }
   }
 
-  /// Footer copy: states what "left on" means and, while searching, that the
-  /// bulk action is scoped to the current matches.
-  private var footerText: String {
+  private var footerText: LocalizedStringResource {
     if isSearching {
-      return "Enable All / Disable All apply to the channels matching your search. Channels left on will alert you when they go live."
+      return "Match actions affect only your search results. Turning any channel off switches to a custom selection, where future follows start off."
     }
-    return "Channels left on will alert you when they go live. Channels you follow later start on."
+    switch settings.mode {
+    case .off:
+      return "Alerts are off. Enable a channel individually or choose Enable All."
+    case .all:
+      return "All current and future follows will alert. Turning any channel off switches to a custom selection, where future follows start off."
+    case .selected:
+      return "Only the channels you switch on will alert. Future follows start off. Enable All includes current and future follows."
+    }
   }
 
   private func channelLabel(_ channel: FollowedChannel) -> some View {
@@ -203,12 +213,10 @@ struct GoLiveAlertsSettingsView: View {
       .padding(.vertical, 8)
   }
 
-  /// Per-channel switch. Reading `settings.isMuted` registers an observation so
-  /// the row reflects changes; writing goes through the store, which persists.
   private func binding(for channel: FollowedChannel) -> Binding<Bool> {
     Binding(
-      get: { !settings.isMuted(login: channel.login) },
-      set: { settings.setAlerting($0, login: channel.login) }
+      get: { settings.isAlerting(login: channel.login) },
+      set: { settings.setAlerting($0, login: channel.login, followedLogins: broadcasters.map(\.login)) }
     )
   }
 }

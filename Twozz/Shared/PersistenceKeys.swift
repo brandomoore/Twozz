@@ -46,6 +46,8 @@ enum PersistenceKey {
 
   static let goLiveNotificationsEnabled = "goLiveNotificationsEnabled"
   static let goLiveMutedChannels = "goLiveMutedChannelsV1"
+  /// Explicit opt-in policy. V1's implicitly enabled preferences are not migrated.
+  static let goLivePreferences = "goLivePreferencesV2"
 
   // MARK: Directory cache freshness — HTTP ETag + last-fetch timestamps
 

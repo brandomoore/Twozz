@@ -35,7 +35,7 @@ struct SettingsPreferencesSection: View {
     case recommendations(Bool)
     case chat(Bool)
     case streamSource(Bool)
-    case alerts(Bool)
+    case alerts(GoLiveNotificationSettings.Mode)
     case solidBackgrounds(Bool)
   }
 
@@ -44,7 +44,6 @@ struct SettingsPreferencesSection: View {
   @AppStorage(PersistenceKey.showChatByDefault) private var showChatByDefault = true
   @AppStorage(RecommendationPreferences.enabledDefaultsKey) private var personalizedRecommendationsEnabled = true
   @AppStorage(StreamLanguagePreference.storageKey) private var streamLanguage = StreamLanguagePreference.deviceDefault()
-  @AppStorage(GoLiveNotificationPreferences.enabledKey) private var goLiveAlertsEnabled = true
   @AppStorage(PersistenceKey.preferYouTubeSource) private var preferYouTubeSource = true
   @AppStorage(PersistenceKey.disableLiquidGlass) private var disableLiquidGlass = false
 
@@ -255,26 +254,31 @@ struct SettingsPreferencesSection: View {
   private var goLiveAlertsRow: some View {
     SettingRow(
       title: "Alerts",
-      subtitle: nil
+      subtitle: String(localized: "Off until you opt in. All Channels includes future follows; choosing individual channels keeps new follows off. These alerts appear only inside Twozz.")
     ) {
-      ForEach([true, false], id: \.self) { on in
-        Button {
-          goLiveAlertsEnabled = on
-        } label: {
-          SettingPill(title: on ? "On" : "Off", isSelected: goLiveAlertsEnabled == on)
-        }
-        .settingPillStyle(isSelected: goLiveAlertsEnabled == on)
-        .focused($focusedControl, equals: .alerts(on))
+      Button {
+        goLiveSettings.disableAll()
+      } label: {
+        SettingPill(title: String(localized: "Off"), isSelected: goLiveSettings.mode == .off)
       }
+      .settingPillStyle(isSelected: goLiveSettings.mode == .off)
+      .focused($focusedControl, equals: .alerts(.off))
+
+      Button {
+        goLiveSettings.enableAll()
+      } label: {
+        SettingPill(title: String(localized: "All Channels"), isSelected: goLiveSettings.mode == .all)
+      }
+      .settingPillStyle(isSelected: goLiveSettings.mode == .all)
+      .focused($focusedControl, equals: .alerts(.all))
 
       NavigationLink {
         GoLiveAlertsSettingsView(follows: follows, settings: goLiveSettings, auth: auth)
       } label: {
-        SettingPill(title: "Choose Channels", isSelected: false)
+        SettingPill(title: String(localized: "Choose Channels"), isSelected: goLiveSettings.mode == .selected)
       }
-      .settingPillStyle(isSelected: false)
-      .disabled(!goLiveAlertsEnabled)
-      .opacity(goLiveAlertsEnabled ? 1 : 0.4)
+      .settingPillStyle(isSelected: goLiveSettings.mode == .selected)
+      .focused($focusedControl, equals: .alerts(.selected))
     }
   }
 

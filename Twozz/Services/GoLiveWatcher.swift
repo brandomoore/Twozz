@@ -74,14 +74,30 @@ final class GoLiveWatcher {
     }
   }
 
-  /// Viewer's go-live alert preferences (master switch + per-channel mutes). When
-  /// unset, every go-live alerts (the default). Owned by `HomeView`.
-  weak var notificationSettings: GoLiveNotificationSettings?
+  /// No preferences means no consent. The app environment owns the store.
+  weak var notificationSettings: GoLiveNotificationSettings? {
+    didSet {
+      oldValue?.onSelectionChange = nil
+      notificationSettings?.onSelectionChange = { [weak self] in
+        self?.notificationSelectionChanged()
+      }
+      notificationSelectionChanged()
+    }
+  }
 
-  /// Whether a toast for `login` is currently allowed: no settings means allow,
-  /// otherwise defer to the master switch and per-channel mute list.
+  private var notificationGeneration = UUID()
+
   private func isAlerting(login: String) -> Bool {
-    notificationSettings?.isAlerting(login: login) ?? true
+    notificationSettings?.isAlerting(login: login) ?? false
+  }
+
+  private func notificationSelectionChanged() {
+    notificationGeneration = UUID()
+    hasBaseline = false
+    knownLiveLogins = []
+    lastPollCompletedAt = nil
+    queue.removeAll { !isAlerting(login: $0.login) }
+    if let pending, !isAlerting(login: pending.login) { advance() }
   }
 
   /// Logins known live as of the last successful poll. Seeded on the first poll
@@ -104,13 +120,13 @@ final class GoLiveWatcher {
 
   /// Begin polling on behalf of `auth`. Replaces any existing watch. A no-op
   /// (after teardown) cadence keeps running and simply skips work while the
-  /// viewer is signed out, so it resumes automatically after sign-in.
+  /// viewer is signed out or has no enabled alerts.
   ///
   /// The poll loop is intentionally *always on* while the app is foreground —
   /// Home, Browse, and during playback — because a go-live toast must be able to
   /// surface no matter where the viewer is in the app. We deliberately do not
-  /// gate it on `scenePhase`: one Helix `streams/followed` request per minute is
-  /// negligible, and tvOS suspends the app (and this `Task.sleep` loop) on its
+  /// gate it on `scenePhase`: when opted in, one Helix `streams/followed` request
+  /// per minute is negligible, and tvOS suspends this `Task.sleep` loop on its
   /// own when it goes to the background, so there's nothing to hand-tune there.
   /// (Per-channel EventSub `stream.online` would avoid polling entirely but caps
   /// subscriptions below a large follow list — see the type doc above.) When the
@@ -166,7 +182,7 @@ final class GoLiveWatcher {
   func watch() -> String? {
     guard let login = pending?.login else { return nil }
     advance()
-    return login
+    return isAlerting(login: login) ? login : nil
   }
 
   /// Dismiss the current toast without acting; surfaces the next queued one.
@@ -181,6 +197,7 @@ final class GoLiveWatcher {
   func simulateGoLive() {
     Task { [weak self] in
       guard let self else { return }
+      let generation = self.notificationGeneration
       var profileURL: URL?
       if let auth = self.auth, auth.isAuthenticated,
          let token = await self.accessToken(auth: auth),
@@ -191,6 +208,7 @@ final class GoLiveWatcher {
       }
       // Decode the avatar before presenting so it animates in with the toast.
       await ImageMemoryCache.shared.prewarm(profileURL)
+      guard generation == self.notificationGeneration else { return }
       self.enqueue(
         GoLiveEvent(
           login: "monstercat", displayName: "Monstercat", gameName: "Music",
@@ -205,6 +223,8 @@ final class GoLiveWatcher {
   /// failure so the caller can back off before retrying.
   @discardableResult
   private func poll(using auth: TwitchAuthSession) async -> Bool {
+    guard notificationSettings?.hasEnabledChannels == true else { return true }
+    let generation = notificationGeneration
     guard auth.isAuthenticated, let userID = auth.userID,
           let clientID = resolveClientID(),
           !Self.disallowedClientIDs.contains(clientID.lowercased())
@@ -234,6 +254,7 @@ final class GoLiveWatcher {
       return false
     }
 
+    guard generation == notificationGeneration, !Task.isCancelled else { return true }
     let liveStreams = streams.filter { $0.type == "live" }
     let liveLogins = Set(liveStreams.map { $0.userLogin.lowercased() })
 
@@ -280,6 +301,7 @@ final class GoLiveWatcher {
 
     // Decode avatars before presenting so they animate in with each toast.
     for event in events { await ImageMemoryCache.shared.prewarm(event.profileImageURL) }
+    guard generation == notificationGeneration, !Task.isCancelled else { return true }
     for event in events { enqueue(event) }
     return true
   }
@@ -351,10 +373,10 @@ final class GoLiveWatcher {
 
   // MARK: - Queue / countdown
 
-  private func enqueue(_ event: GoLiveEvent) {
-    // Respect the viewer's alert preferences (master switch + per-channel mute).
+  func enqueue(_ event: GoLiveEvent) {
+    // Respect explicit consent at delivery as well as during polling.
     // Centralized here so the debug `simulateGoLive` path honors them too.
-    guard isAlerting(login: event.login) else { return }
+    guard isAlerting(login: event.login), event.login != suppressedLogin?.lowercased() else { return }
 
     // Collapse duplicates: a channel already showing/queued shouldn't stack.
     guard pending?.login != event.login, !queue.contains(where: { $0.login == event.login })
@@ -370,6 +392,7 @@ final class GoLiveWatcher {
   private func advance() {
     dismissTask?.cancel()
     dismissTask = nil
+    queue.removeAll { !isAlerting(login: $0.login) || $0.login == suppressedLogin?.lowercased() }
     if queue.isEmpty {
       pending = nil
       secondsRemaining = 0

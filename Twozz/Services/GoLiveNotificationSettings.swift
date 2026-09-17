@@ -1,94 +1,124 @@
 import Foundation
 import Observation
+import OSLog
 
-/// User-facing preference keys for the in-app "just went live" toast. Kept in a
-/// non-isolated enum so SwiftUI `@AppStorage` and other call sites can reference
-/// the keys without touching the `@MainActor`-isolated store.
-///
-/// tvOS has no system notifications, so these alerts are **in-app only** — they
-/// surface as the existing `GoLiveToastView` and never as banners, badges, or
-/// sounds, and they don't affect Twitch notifications on the viewer's other
-/// devices.
-enum GoLiveNotificationPreferences {
-  /// Master on/off for go-live toasts. Defaults to enabled.
-  static let enabledKey = PersistenceKey.goLiveNotificationsEnabled
-  /// Lowercased logins the viewer has muted (opt-out model). Stored as `[String]`.
-  static let mutedLoginsKey = PersistenceKey.goLiveMutedChannels
-}
-
-/// On-device store for which followed channels may surface a go-live toast.
-///
-/// Model is **opt-out**: by default every followed channel alerts, and the viewer
-/// mutes the ones they don't want. The muted set is keyed by lowercased login to
-/// match `GoLiveWatcher`'s identity model (`GoLiveEvent.id == login`). A channel
-/// rename harmlessly reverts that channel to alerting.
-///
-/// Everything lives only in this device's `UserDefaults`; nothing is transmitted.
+/// In-app alerts on this Apple TV only; never changes Twitch's bell preferences.
 @MainActor
 @Observable
 final class GoLiveNotificationSettings {
-  /// Master switch, mirrored from `UserDefaults` so the Settings `@AppStorage`
-  /// toggle and this store always agree. Defaults to on.
-  var isEnabled: Bool {
-    get {
-      UserDefaults.standard.object(forKey: GoLiveNotificationPreferences.enabledKey) as? Bool ?? true
-    }
-    set {
-      UserDefaults.standard.set(newValue, forKey: GoLiveNotificationPreferences.enabledKey)
-    }
+  enum Mode: String, Codable {
+    case off
+    case all
+    case selected
   }
 
-  /// Lowercased logins the viewer has muted.
-  private(set) var mutedLogins: Set<String> = []
-
-  init() {
-    load()
+  private struct Preferences: Codable, Equatable {
+    var mode: Mode = .off
+    var selectedLogins: Set<String> = []
+    var hasPrompted = false
   }
 
-  /// Whether a go-live toast for `login` should be shown right now: the master
-  /// switch is on **and** the channel isn't muted.
-  func isAlerting(login: String) -> Bool {
-    isEnabled && !mutedLogins.contains(login.lowercased())
+  private static let log = Logger(subsystem: "com.thatcube.Twozz", category: "GoLiveAlerts")
+  private let defaults: UserDefaults
+  private var preferences: Preferences
+
+  /// The shared watcher immediately drops alerts made ineligible by an edit.
+  @ObservationIgnored var onSelectionChange: (() -> Void)?
+
+  var mode: Mode { preferences.mode }
+  var hasPrompted: Bool { preferences.hasPrompted }
+  var hasEnabledChannels: Bool {
+    mode == .all || (mode == .selected && !preferences.selectedLogins.isEmpty)
   }
 
-  /// Whether `login` is individually muted (independent of the master switch).
-  func isMuted(login: String) -> Bool {
-    mutedLogins.contains(login.lowercased())
-  }
-
-  /// Turn per-channel alerts on/off for `login` and persist.
-  func setAlerting(_ on: Bool, login: String) {
-    let key = login.lowercased()
-    guard !key.isEmpty else { return }
-    if on {
-      guard mutedLogins.contains(key) else { return }
-      mutedLogins.remove(key)
+  init(defaults: UserDefaults = .standard) {
+    self.defaults = defaults
+    // V1 was implicitly on. Do not treat those old values or mutes as consent:
+    // both fresh installs and existing installs start off and get one new ask.
+    if let data = defaults.data(forKey: PersistenceKey.goLivePreferences) {
+      do {
+        preferences = try JSONDecoder().decode(Preferences.self, from: data)
+      } catch {
+        Self.log.error("Invalid go-live preferences; alerts remain off until configured again")
+        preferences = Preferences()
+      }
     } else {
-      guard !mutedLogins.contains(key) else { return }
-      mutedLogins.insert(key)
+      preferences = Preferences()
     }
+  }
+
+  func isAlerting(login: String) -> Bool {
+    let key = Self.normalize(login)
+    guard !key.isEmpty else { return false }
+    switch mode {
+    case .off: return false
+    case .all: return true
+    case .selected: return preferences.selectedLogins.contains(key)
+    }
+  }
+
+  func markPromptPresented() {
+    guard !hasPrompted else { return }
+    preferences.hasPrompted = true
     persist()
   }
 
-  /// Turn per-channel alerts on/off for many `logins` at once and persist a
-  /// single time. Backs the "Enable All" / "Disable All" bulk controls; `on ==
-  /// false` adds every login to the muted set, `on == true` removes them.
-  func setAlerting(_ on: Bool, logins: [String]) {
-    let keys = logins.map { $0.lowercased() }.filter { !$0.isEmpty }
-    guard !keys.isEmpty else { return }
-    let updated = on ? mutedLogins.subtracting(keys) : mutedLogins.union(keys)
-    guard updated != mutedLogins else { return }
-    mutedLogins = updated
-    persist()
+  func disableAll() {
+    update(mode: .off, selectedLogins: [])
   }
 
-  private func load() {
-    let stored = UserDefaults.standard.stringArray(forKey: GoLiveNotificationPreferences.mutedLoginsKey) ?? []
-    mutedLogins = Set(stored.map { $0.lowercased() })
+  /// Includes future follows until a per-channel edit switches to a custom list.
+  func enableAll() {
+    update(mode: .all, selectedLogins: [])
+  }
+
+  /// Opening the picker from Off starts empty. Opening it from All does not
+  /// change that policy until a channel is actually switched off.
+  func beginChoosingChannels() {
+    if mode == .off {
+      update(mode: .selected, selectedLogins: [])
+    } else {
+      markPromptPresented()
+    }
+  }
+
+  func setAlerting(_ on: Bool, login: String, followedLogins: [String]) {
+    setAlerting(on, logins: [login], followedLogins: followedLogins)
+  }
+
+  /// `followedLogins` is the full, unfiltered directory. When leaving All,
+  /// snapshot every current follow, not just search matches or live channels.
+  func setAlerting(_ on: Bool, logins: [String], followedLogins: [String]) {
+    let keys = Set(logins.map(Self.normalize).filter { !$0.isEmpty })
+    guard !keys.isEmpty else {
+      Self.log.error("Cannot change go-live alerts without a channel login")
+      return
+    }
+    if mode == .all && on { return }
+    let selection = mode == .all
+      ? Set(followedLogins.map(Self.normalize).filter { !$0.isEmpty })
+      : preferences.selectedLogins
+    update(mode: .selected, selectedLogins: on ? selection.union(keys) : selection.subtracting(keys))
+  }
+
+  private func update(mode: Mode, selectedLogins: Set<String>) {
+    let updated = Preferences(mode: mode, selectedLogins: selectedLogins, hasPrompted: true)
+    guard updated != preferences else { return }
+    preferences = updated
+    persist()
+    onSelectionChange?()
   }
 
   private func persist() {
-    UserDefaults.standard.set(
-      Array(mutedLogins).sorted(), forKey: GoLiveNotificationPreferences.mutedLoginsKey)
+    do {
+      let data = try JSONEncoder().encode(preferences)
+      defaults.set(data, forKey: PersistenceKey.goLivePreferences)
+    } catch {
+      Self.log.error("Could not save go-live preferences (code \((error as NSError).code))")
+    }
+  }
+
+  private static func normalize(_ login: String) -> String {
+    login.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
   }
 }

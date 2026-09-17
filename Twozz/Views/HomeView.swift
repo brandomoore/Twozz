@@ -58,6 +58,7 @@ struct HomeView: View {
   @State private var firstFocusRequested = false
   @State private var showSignIn = false
   @State private var showYouTubeSignIn = false
+  @State private var showGoLiveSetup = false
   @State private var youtubePlayback: YouTubePlaybackTarget?
   @AppStorage(YouTubePreferences.showSubscriptionsKey) private var showYouTubeSubscriptions = true
   @State private var refreshToast: RefreshToastState?
@@ -300,7 +301,6 @@ struct HomeView: View {
       auth.restore()
       auth.startSessionValidation()
       youtubeAuth.restore()
-      goLive.notificationSettings = goLiveSettings
       goLive.start(using: auth)
       promptFirstLaunchSignInIfNeeded()
       await refreshHomeSections(force: true)
@@ -309,6 +309,7 @@ struct HomeView: View {
       await youtubeSubscriptions.refresh(using: youtubeAuth)
       await refreshYouTubeSubscriptionLiveness()
       hasCompletedInitialLoad = true
+      promptGoLiveSetupIfNeeded()
     }
     .task {
       await runIdleAutoRefreshLoop()
@@ -324,6 +325,7 @@ struct HomeView: View {
       // and unforced so each rail's staleness window keeps a quick trip away
       // free.
       guard hasCompletedInitialLoad else { return }
+      promptGoLiveSetupIfNeeded()
       Task {
         await refreshHomeSections(force: false)
         await youtubeSubscriptions.refresh(using: youtubeAuth)
@@ -360,10 +362,13 @@ struct HomeView: View {
     }
     .onChange(of: selectedSidebarTab) { _, tab in
       guard tab == .home else { return }
+      promptGoLiveSetupIfNeeded()
       Task {
         await refreshHomeSections(force: false)
       }
     }
+    .onChange(of: homePath) { _, _ in promptGoLiveSetupIfNeeded() }
+    .onChange(of: showingFollowingDirectory) { _, _ in promptGoLiveSetupIfNeeded() }
     .onChange(of: deepLinkRouter.pendingChannelLogin) { _, login in
       openDeepLinkedChannelIfNeeded(login)
     }
@@ -381,11 +386,14 @@ struct HomeView: View {
         await refreshPersonalizedIfNeeded(force: true)
       }
     }
-    .fullScreenCover(item: $selectedChannel) { channel in
+    .fullScreenCover(item: $selectedChannel, onDismiss: { promptGoLiveSetupIfNeeded() }) { channel in
       PlayerView(channel: channel.login, auth: auth, goLive: goLive, posterURL: channel.thumbnailURL)
         .environment(\.themePalette, resolvedPalette)
     }
-    .fullScreenCover(item: $channelPageTarget, onDismiss: { presentPendingWatchIfNeeded() }) { target in
+    .fullScreenCover(item: $channelPageTarget, onDismiss: {
+      presentPendingWatchIfNeeded()
+      promptGoLiveSetupIfNeeded()
+    }) { target in
       ChannelPageView(
         target: target,
         onWatchChannel: { channel in
@@ -396,7 +404,7 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(item: $multiviewLaunch) { launch in
+    .fullScreenCover(item: $multiviewLaunch, onDismiss: { promptGoLiveSetupIfNeeded() }) { launch in
       MultiviewPlayerView(
         channels: launch.channels,
         availableChannels: multiviewAvailablePool,
@@ -407,7 +415,7 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(isPresented: $showSignIn) {
+    .fullScreenCover(isPresented: $showSignIn, onDismiss: { promptGoLiveSetupIfNeeded() }) {
       SignInView(auth: auth) {
         Task {
           await refreshFollowedChannelsIfNeeded(force: true)
@@ -417,7 +425,7 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(isPresented: $showYouTubeSignIn) {
+    .fullScreenCover(isPresented: $showYouTubeSignIn, onDismiss: { promptGoLiveSetupIfNeeded() }) {
       YouTubeSignInView(auth: youtubeAuth) {
         Task {
           await youtubeSubscriptions.refresh(using: youtubeAuth, force: true)
@@ -427,8 +435,13 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(item: $youtubePlayback) { target in
+    .fullScreenCover(item: $youtubePlayback, onDismiss: { promptGoLiveSetupIfNeeded() }) { target in
       YouTubeLivePlayerView(videoID: target.videoID, title: target.title)
+        .environment(\.themePalette, resolvedPalette)
+        .preferredColorScheme(themeManager.theme.preferredColorScheme)
+    }
+    .fullScreenCover(isPresented: $showGoLiveSetup) {
+      GoLiveAlertsSetupView(follows: follows, settings: goLiveSettings, auth: auth)
         .environment(\.themePalette, resolvedPalette)
         .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
@@ -640,6 +653,14 @@ struct HomeView: View {
     showSignIn = true
   }
 
+  private func promptGoLiveSetupIfNeeded() {
+    guard hasCompletedInitialLoad, isForeground, auth.isAuthenticated,
+      selectedSidebarTab == .home, homePath.isEmpty, !showingFollowingDirectory,
+      !isPresentingCover, pendingWatchChannel == nil,
+      deepLinkRouter.pendingChannelLogin == nil, !goLiveSettings.hasPrompted else { return }
+    showGoLiveSetup = true
+  }
+
   private func requestFocusIfPossible(force: Bool) {
     guard let first = follows.channels.first else { return }
     if !force && firstFocusRequested { return }
@@ -677,6 +698,7 @@ struct HomeView: View {
   private var isPresentingCover: Bool {
     selectedChannel != nil || channelPageTarget != nil || multiviewLaunch != nil
       || youtubePlayback != nil || showSignIn || showYouTubeSignIn
+      || showGoLiveSetup
   }
 
   /// Everything that means the viewer is actively using Home. Any change resets

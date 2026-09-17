@@ -127,6 +127,24 @@ python3 tools/generate_brand_assets.py
 python3 -m unittest discover -s tools/tests -p 'test_brand_assets.py'
 ```
 
+### Go Live Alerts
+
+In-app live-channel alerts are **off by default**, including after updating from
+the old opt-out behavior. Twozz asks once on Home after Twitch sign-in: keep
+alerts off, enable **All Channels**, or **Choose Channels** individually. You
+can change this later under **Settings > Go Live Alerts**.
+
+All Channels includes current and future Twitch follows. Turning any channel off
+switches to a custom selection of your current follows, with new follows off.
+Turning every individual switch back on does not opt into future follows; use
+Enable All for that. Search-based bulk actions affect only matching channels.
+Turning alerts off also dismisses any pending alerts and clears the queue.
+
+These settings stay on this Apple TV and affect only Twozz's in-app alerts.
+Twitch's supported [Get Followed Channels API](https://dev.twitch.tv/docs/api/reference/#get-followed-channels)
+does not expose notification-bell preferences, so Twozz does not sync them or
+change Twitch notifications on other devices.
+
 ### YouTube live-source selection
 
 YouTube playback requires a currently live broadcast, not just a playable HLS
