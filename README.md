@@ -127,6 +127,16 @@ python3 tools/generate_brand_assets.py
 python3 -m unittest discover -s tools/tests -p 'test_brand_assets.py'
 ```
 
+### YouTube live-source selection
+
+YouTube playback requires a currently live broadcast, not just a playable HLS
+playlist or the `isLiveContent` flag (which remains set on archived streams).
+Channel lookups use the primary player response, never arbitrary video IDs from
+uploads or recommendations. The native player response must confirm the selected
+video ID and current live status before playback. If it cannot, the YouTube
+source stays unavailable and Twitch remains selected; an already-selected
+YouTube source uses the existing bounded retry and Twitch fallback notice.
+
 ### Playback diagnostics
 
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports

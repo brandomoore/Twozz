@@ -31,6 +31,7 @@ enum AltSourceService {
     case notPlayable(String)
     case noNativeHLS
     case invalidManifest
+    case videoMismatch
 
     var errorDescription: String? {
       switch self {
@@ -40,7 +41,7 @@ enum AltSourceService {
         return String(localized: "YouTube request failed (HTTP \(status)).")
       case .notPlayable:
         return String(localized: "YouTube isn't allowing playback of this stream.")
-      case .invalidManifest:
+      case .invalidManifest, .videoMismatch:
         return String(localized: "YouTube returned an invalid live stream.")
       }
     }
@@ -73,7 +74,7 @@ enum AltSourceService {
     let visitor = firstMatch(in: watchHTML, pattern: "\"visitorData\":\"([^\"]+)\"")
     let request = try nativePlayerRequest(forVideoID: videoID, visitor: visitor)
     let data = try await responseData(for: request)
-    let master = try nativeHLSMaster(in: data)
+    let master = try nativeHLSMaster(in: data, forVideoID: videoID)
     return YouTubeLive(hlsMaster: master, concurrentViewers: viewers)
   }
 
@@ -95,14 +96,59 @@ enum AltSourceService {
     let (data, response) = try await NetworkClient.api.data(for: request)
     try validate(response)
 
-    if let finalURL = response.url?.absoluteString, let id = extractVideoID(from: finalURL) {
+    return try liveVideoID(in: String(decoding: data, as: UTF8.self), finalURL: response.url)
+  }
+
+  static func liveVideoID(in html: String, finalURL: URL?) throws -> String {
+    // A watch redirect is only a candidate; the native response must still
+    // confirm its identity and current live status before any item is created.
+    if let finalURL, let id = extractVideoID(from: finalURL.absoluteString) {
       return id
     }
-    let html = String(decoding: data, as: UTF8.self)
-    guard let id = firstMatch(in: html, pattern: "\"videoId\":\"([A-Za-z0-9_-]{11})\"") else {
+    let response = try initialPlayerResponse(in: html)
+    guard response.isLiveNow,
+      let id = response.videoDetails?.videoId,
+      id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil
+    else {
       throw ResolutionError.noLiveVideo
     }
     return id
+  }
+
+  private static func initialPlayerResponse(in html: String) throws -> PlayerResponse {
+    guard let assignment = html.range(
+      of: #"(?:\bytInitialPlayerResponse|window\["ytInitialPlayerResponse"\])\s*=\s*\{"#,
+      options: .regularExpression
+    ) else { throw ResolutionError.noLiveVideo }
+    let start = html.index(before: assignment.upperBound)
+    var depth = 0
+    var inString = false
+    var escaped = false
+    // Balance JSON, not a regex over all video IDs: recommendations and old
+    // uploads can precede the actual player, and strings can contain braces.
+    for index in html.indices[start...] {
+      let character = html[index]
+      if inString {
+        if escaped {
+          escaped = false
+        } else if character == "\\" {
+          escaped = true
+        } else if character == "\"" {
+          inString = false
+        }
+      } else if character == "\"" {
+        inString = true
+      } else if character == "{" {
+        depth += 1
+      } else if character == "}" {
+        depth -= 1
+        if depth == 0 {
+          return try JSONDecoder().decode(
+            PlayerResponse.self, from: Data(html[start...index].utf8))
+        }
+      }
+    }
+    throw ResolutionError.noLiveVideo
   }
 
   private static func liveLookupURL(from input: String) -> URL? {
@@ -159,17 +205,49 @@ enum AltSourceService {
     return request
   }
 
-  static func nativeHLSMaster(in data: Data) throws -> URL {
-    struct PlayerResponse: Decodable {
-      struct Playability: Decodable { var status: String }
-      struct StreamingData: Decodable { var hlsManifestUrl: String? }
-      var playabilityStatus: Playability
-      var streamingData: StreamingData?
+  private struct PlayerResponse: Decodable {
+    struct Playability: Decodable { var status: String }
+    struct StreamingData: Decodable { var hlsManifestUrl: String? }
+    struct VideoDetails: Decodable {
+      var videoId: String?
+      var isLive: Bool?
+      var isUpcoming: Bool?
+      var isPostLiveDvr: Bool?
     }
+    struct Microformat: Decodable {
+      struct Renderer: Decodable {
+        struct LiveBroadcast: Decodable {
+          var isLiveNow: Bool?
+          var endTimestamp: String?
+        }
+        var liveBroadcastDetails: LiveBroadcast?
+      }
+      var playerMicroformatRenderer: Renderer?
+    }
+    var playabilityStatus: Playability?
+    var streamingData: StreamingData?
+    var videoDetails: VideoDetails?
+    var microformat: Microformat?
+
+    var isLiveNow: Bool {
+      let broadcast = microformat?.playerMicroformatRenderer?.liveBroadcastDetails
+      // isLiveContent remains true on archived streams. Native VISIONOS uses
+      // videoDetails.isLive; web player responses use liveBroadcastDetails.
+      guard videoDetails?.isLive != false,
+        videoDetails?.isUpcoming != true, videoDetails?.isPostLiveDvr != true,
+        broadcast?.isLiveNow != false,
+        broadcast?.endTimestamp == nil else { return false }
+      return videoDetails?.isLive == true || broadcast?.isLiveNow == true
+    }
+  }
+
+  static func nativeHLSMaster(in data: Data, forVideoID videoID: String) throws -> URL {
     let response = try JSONDecoder().decode(PlayerResponse.self, from: data)
-    guard response.playabilityStatus.status == "OK" else {
-      throw ResolutionError.notPlayable(response.playabilityStatus.status)
+    guard response.playabilityStatus?.status == "OK" else {
+      throw ResolutionError.notPlayable(response.playabilityStatus?.status ?? "unknown")
     }
+    guard response.videoDetails?.videoId == videoID else { throw ResolutionError.videoMismatch }
+    guard response.isLiveNow else { throw ResolutionError.noLiveVideo }
     guard let manifest = response.streamingData?.hlsManifestUrl else {
       throw ResolutionError.noNativeHLS
     }
@@ -237,6 +315,7 @@ enum AltSourceService {
       attributes["playability_status"] = known.contains(status) ? status : "unknown"
     case ResolutionError.noNativeHLS: attributes["resolver_outcome"] = "no_native_hls"
     case ResolutionError.invalidManifest: attributes["resolver_outcome"] = "invalid_manifest"
+    case ResolutionError.videoMismatch: attributes["resolver_outcome"] = "video_mismatch"
     case is DecodingError: attributes["resolver_outcome"] = "invalid_response"
     default:
       attributes["resolver_outcome"] = "request_failed"
