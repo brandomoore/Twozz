@@ -25,6 +25,7 @@ struct SettingsPreferencesSection: View {
 
   @State private var showClearHistoryConfirm = false
   @State private var showResetNotInterestedConfirm = false
+  @State private var showGoLiveOptions = false
   @FocusState private var focusedControl: PreferenceFocus?
 
   private enum PreferenceFocus: Hashable {
@@ -279,6 +280,16 @@ struct SettingsPreferencesSection: View {
       }
       .settingPillStyle(isSelected: goLiveSettings.mode == .selected)
       .focused($focusedControl, equals: .alerts(.selected))
+
+      Button {
+        showGoLiveOptions = true
+      } label: {
+        SettingPill(title: String(localized: "Review Options"), isSelected: false)
+      }
+      .settingPillStyle(isSelected: false)
+    }
+    .fullScreenCover(isPresented: $showGoLiveOptions) {
+      GoLiveAlertsSetupView(follows: follows, settings: goLiveSettings, auth: auth)
     }
   }
 

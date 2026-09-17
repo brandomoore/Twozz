@@ -133,6 +133,8 @@ In-app live-channel alerts are **off by default**, including after updating from
 the old opt-out behavior. Twozz asks once on Home after Twitch sign-in: keep
 alerts off, enable **All Channels**, or **Choose Channels** individually. You
 can change this later under **Settings > Go Live Alerts**.
+**Review Options** reopens the introduction without resetting your selections
+or making the automatic prompt repeat.
 
 All Channels includes current and future Twitch follows. Turning any channel off
 switches to a custom selection of your current follows, with new follows off.
