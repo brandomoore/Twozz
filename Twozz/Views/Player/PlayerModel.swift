@@ -57,6 +57,7 @@ final class PlayerModel {
   /// Always-on structured playback recorder. It mirrors key events to OSLog and
   /// persists a bounded JSONL session for agent-driven postmortem analysis.
   let playbackTelemetry = PlaybackTelemetryRecorder()
+  @ObservationIgnored var startupProgress = LivePlaybackStartup.Progress()
 
   // MARK: Monitoring boxes
   // Plain (non-`@Observable`) reference boxes for the once-per-second / per-frame

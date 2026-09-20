@@ -24,6 +24,7 @@ extension PlayerView {
     let asset = AVURLAsset(
       url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": Self.altSourceHTTPHeaders])
     let item = AVPlayerItem(asset: asset)
+    item.preferredForwardBufferDuration = LivePlaybackStartup.youtubeForwardBufferSeconds
     item.audioTimePitchAlgorithm = .timeDomain
     item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
     // Frame tap so the diagnostics readout can prove real decoded video is
@@ -39,7 +40,7 @@ extension PlayerView {
   /// Twitch-only control loops (edge-chasing rate controller + stall watchdog,
   /// whose recovery would reload the Twitch source) while active; the read-only
   /// latency monitor keeps running so the Diagnostics readout still measures.
-  func switchToAltYouTubeSource() async {
+  func switchToAltYouTubeSource(resolved: AltSourceService.YouTubeLive? = nil) async {
     guard !isVOD else { return }
     resetAltSourceWork()
     recordPlaybackEvent("source_switch_started", attributes: ["to_source": "youtube"])
@@ -50,6 +51,11 @@ extension PlayerView {
     stopPlaybackWatchdog()
     startLatencyMonitor()
     let generation = model.altRecovery.generation
+    if let resolved {
+      lastAltResolveAt = Date()
+      installAltSource(resolved, resolveStartedAt: ProcessInfo.processInfo.systemUptime)
+      return
+    }
     if !(await resolveAndPlayAltSource(reason: "enable")),
       generation == model.altRecovery.generation
     {
@@ -136,6 +142,11 @@ extension PlayerView {
     guard login == activeChannel, isUsingAltSource,
       telemetrySessionID == model.playbackTelemetry.sessionID,
       generation == model.altRecovery.generation, !Task.isCancelled else { return false }
+    installAltSource(resolved, resolveStartedAt: resolveStartedAt)
+    return true
+  }
+
+  private func installAltSource(_ resolved: AltSourceService.YouTubeLive, resolveStartedAt: TimeInterval) {
     youtubeViewerCount = resolved.concurrentViewers
     let master = resolved.hlsMaster
 
@@ -144,10 +155,10 @@ extension PlayerView {
     replacePlaybackItem(with: makeAltSourceItem(url: master))
     // Resolution can finish after the user pauses, scrubs, or backgrounds.
     if shouldPlayAltSource { startPlayback() }
-    isLoading = false
+    isLoading = true
     isOffline = false
     errorMessage = nil
-    altSourceStatus = "Playing YouTube simulcast"
+    altSourceStatus = "Buffering YouTube simulcast…"
     recordPlaybackEvent(
       "source_switch_completed",
       attributes: AltSourceService.resolverAttributes.merging([
@@ -156,7 +167,6 @@ extension PlayerView {
       ]) { _, new in new },
       metrics: ["resolve_duration_seconds": ProcessInfo.processInfo.systemUptime - resolveStartedAt]
     )
-    return true
   }
 
   /// Restores the proxied Twitch source and its control loops.
@@ -175,8 +185,8 @@ extension PlayerView {
       }
       return
     }
-    replacePlaybackItem(with: makeItem(url: playback.master))
-    applyQualityPreference(preferredQuality)
+    replacePlaybackItem(with: makeItem(url: playback.url(forQuality: preferredQuality)))
+    isLoading = false
     if shouldPlayAltSource { startPlayback() }
     startRateController()
     startPlaybackWatchdog()
@@ -323,27 +333,6 @@ extension PlayerView {
       !Task.isCancelled else { return }
     youtubeSourceAvailable = true
     youtubeViewerCount = resolved.concurrentViewers
-
-    // With a confirmed simulcast in hand, honor the "prefer YouTube" default by
-    // promoting it to the active source. Done here (rather than in `load()`) so
-    // it fires the moment availability resolves, even if the Twitch pipeline
-    // came up first — yielding a single clean switch instead of a flap.
-    await autoSelectYouTubeSourceIfPreferred()
-  }
-
-  /// Switches to the YouTube simulcast as the default source when the viewer
-  /// prefers it and the active channel has a confirmed live source — unless the
-  /// viewer already made a deliberate Stream Source choice for this channel.
-  /// Reuses the existing alt-source machinery; non-YouTube channels and VODs are
-  /// untouched, and a manual switch (in either direction) is never overridden.
-  func autoSelectYouTubeSourceIfPreferred() async {
-    guard preferYouTubeSource else { return }
-    guard !isVOD else { return }
-    guard youtubeSourceAvailable else { return }
-    guard !isUsingAltSource else { return }
-    guard !didManuallySelectSource else { return }
-    guard !model.didFallbackFromYouTube else { return }
-    await switchToAltYouTubeSource()
   }
 
   /// Polls the alternate-source item each monitor tick and reports its *real*
@@ -352,6 +341,7 @@ extension PlayerView {
   /// genuine playback. Diagnostic-only; runs while the alt source is active.
   func updateAltSourceDiagnostics() {
     guard isUsingAltSource else { return }
+    if model.startupProgress.hasStarted, !altResolveInFlight { isLoading = false }
     if player.currentItem?.status == .failed {
       model.altRecovery.noteTerminalFailure()
     }

@@ -43,4 +43,29 @@ final class PlaybackServiceParseMasterTests: XCTestCase {
   func testEmptyPlaylistYieldsNoVariants() {
     XCTAssertTrue(PlaybackService.parseMaster("#EXTM3U\n").isEmpty)
   }
+
+  func testInitialItemUsesPinnedRenditionWithoutStartingMasterFirst() throws {
+    let source = StreamPlayback(
+      master: URL(string: "https://video.example/master.m3u8")!,
+      qualities: PlaybackService.parseMaster(master))
+    let pinned = try XCTUnwrap(source.qualities.first { $0.name == "720p60" })
+    XCTAssertEqual(source.url(forQuality: pinned.name), pinned.url)
+    XCTAssertNotEqual(source.url(forQuality: pinned.name), source.master)
+  }
+
+  func testAutoAndUnavailableQualityUseMaster() {
+    let source = StreamPlayback(
+      master: URL(string: "https://video.example/master.m3u8")!,
+      qualities: PlaybackService.parseMaster(master))
+    XCTAssertEqual(source.url(forQuality: "Auto"), source.master)
+    XCTAssertEqual(source.url(forQuality: "1440p60"), source.master)
+  }
+
+  func testInitialAudioOnlyItemUsesAudioRendition() throws {
+    let source = StreamPlayback(
+      master: URL(string: "https://video.example/master.m3u8")!,
+      qualities: PlaybackService.parseMaster(master))
+    let audio = try XCTUnwrap(source.qualities.first { $0.isAudioOnly })
+    XCTAssertEqual(source.url(forQuality: audio.name), audio.url)
+  }
 }

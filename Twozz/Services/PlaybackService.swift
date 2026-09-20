@@ -37,6 +37,10 @@ struct StreamQuality: Identifiable, Hashable {
 struct StreamPlayback {
     let master: URL
     let qualities: [StreamQuality]
+
+    func url(forQuality quality: String) -> URL {
+        quality == "Auto" ? master : (qualities.first { $0.name == quality }?.url ?? master)
+    }
 }
 
 struct ChannelMetadata {

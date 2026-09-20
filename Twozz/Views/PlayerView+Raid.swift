@@ -108,6 +108,7 @@ extension PlayerView {
     player.pause()
     replacePlaybackItem(with: nil)
     currentSourceURL = nil
+    playback = nil
     activeChannel = login
     chat.disconnect()
     // Restart the outgoing-raid listener for the new channel so a stale
@@ -119,6 +120,7 @@ extension PlayerView {
     isLoading = true
     errorMessage = nil
     isOffline = false
+    didManuallySelectSource = false
     streamTitle = ""
     channelDisplayName = ""
     channelAvatarURL = nil
@@ -128,7 +130,7 @@ extension PlayerView {
     chat.connect(to: login)
     Task {
       async let metadataTask: Void = refreshChannelMetadata()
-      await load(reason: "raid follow", resetMetadata: false)
+      await loadInitialSource(reason: "raid follow", resetMetadata: false)
       _ = await metadataTask
       focus = .video
     }

@@ -102,7 +102,7 @@ extension PlayerView {
         eventSub.start(forChannel: activeChannel, auth: auth)
         hermes.start(forChannel: activeChannel)
         async let metadataTask: Void = refreshChannelMetadata()
-        await load()
+        await loadInitialSource()
         _ = await metadataTask
       }
       focus = .video
@@ -181,27 +181,16 @@ extension PlayerView {
       guard now.timeIntervalSince(lastStallNotificationAt) >= stallNotificationDebounceSeconds
       else { return }
       lastStallNotificationAt = now
-      markDiagnosticsStall(reason: "AVPlayerItemPlaybackStalled")
-      // Do not force a starved YouTube item to play its last fraction of a
-      // second and stall again. Its native buffering wait and bounded alternate
-      // recovery own this path, not the Twitch-specific immediate nudge.
-      if isUsingAltSource {
-        recordPlaybackEvent(
-          "native_buffer_wait_preserved",
-          attributes: ["reason": "alternate_source_stall"],
-          metrics: ["buffer_ahead_seconds": bufferAheadSeconds(stalledItem) ?? -1]
-        )
-        return
+      if model.startupProgress.hasStarted {
+        markDiagnosticsStall(reason: "AVPlayerItemPlaybackStalled")
       }
-      // Re-kick immediately. With automaticallyWaitsToMinimizeStalling the player
-      // usually self-resumes once buffered, but an explicit nudge shortens the
-      // gap and helps the player that has stalled without auto-resuming.
-      player.playImmediately(atRate: 1.0)
+      // A stall notification is not proof of a deadlock. The watchdog handles
+      // sustained stalls; forcing play here can consume the remaining buffer.
       recordPlaybackEvent(
-        "playback_nudged",
-        level: .warning,
+        "native_buffer_wait_preserved",
         attributes: ["reason": "stall_notification"],
-        metrics: ["buffer_ahead_seconds": bufferAheadSeconds(stalledItem) ?? -1]
+        metrics: ["buffer_ahead_seconds": bufferAheadSeconds(stalledItem) ?? -1],
+        flags: ["startup_complete": model.startupProgress.hasStarted]
       )
     }
     .onReceive(NotificationCenter.default.publisher(for: .AVPlayerItemFailedToPlayToEndTime)) {
@@ -535,7 +524,10 @@ extension PlayerView {
     .task(id: activeChannel) {
       await refreshYouTubeAutoTarget()
     }
-    .task(id: activeChannel) {
+    .task(id: isLoading) {
+      // After a slow preferred-source lookup falls back, still allow a manual
+      // YouTube choice without replacing the Twitch stream that already started.
+      guard !isLoading, !isUsingAltSource, !youtubeSourceAvailable else { return }
       await refreshYouTubeSourceAvailability()
     }
     .task(id: activeChannel) {

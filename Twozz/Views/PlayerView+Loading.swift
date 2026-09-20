@@ -6,6 +6,42 @@ import UIKit
 extension PlayerView {
   // MARK: - Loading
 
+  func loadInitialSource(reason: String = "initial", resetMetadata: Bool = true) async {
+    let login = activeChannel
+    let sessionID = model.playbackTelemetry.sessionID
+    let generation = model.altRecovery.generation
+    if preferYouTubeSource, !didManuallySelectSource {
+      do {
+        let source = try await LivePlaybackStartup.resolveYouTube {
+          let target = await Self.resolveYouTubeTarget(forTwitchLogin: login)
+          try Task.checkCancellation()
+          return LivePlaybackStartup.YouTubeSource(
+            target: target, live: try await AltSourceService.youtubeLive(forTarget: target))
+        }
+        guard !Task.isCancelled, login == activeChannel,
+          sessionID == model.playbackTelemetry.sessionID,
+          generation == model.altRecovery.generation, !didManuallySelectSource else { return }
+        youtubeAutoResolvedTarget = source.target
+        applyExperimentalYouTubeSettings()
+        youtubeSourceAvailable = true
+        recordPlaybackEvent("initial_source_selected", attributes: ["source": "youtube"])
+        await switchToAltYouTubeSource(resolved: source.live)
+        return
+      } catch {
+        guard !Task.isCancelled, login == activeChannel,
+          sessionID == model.playbackTelemetry.sessionID,
+          generation == model.altRecovery.generation, !didManuallySelectSource else { return }
+        recordPlaybackEvent(
+          "initial_source_fallback", level: .warning,
+          attributes: AltSourceService.errorAttributes(error).merging(["to_source": "twitch"]) { _, new in new }
+        )
+      }
+    }
+    guard !Task.isCancelled else { return }
+    recordPlaybackEvent("initial_source_selected", attributes: ["source": "twitch"])
+    await load(reason: reason, resetMetadata: resetMetadata)
+  }
+
   enum LoadTimeoutError: LocalizedError {
     case timedOut
     case noPlaybackProgress
@@ -92,8 +128,8 @@ extension PlayerView {
           replacePlaybackItem(with: nil)
           return
         }
-        // A "prefer YouTube" auto-default (or a manual pick) may have promoted
-        // the alternate source while this Twitch resolve was in flight. Bail
+        // A manual pick may have promoted the alternate source while this
+        // Twitch resolve was in flight. Bail
         // before swapping in the Twitch item / re-arming the Twitch-only control
         // loops, so we don't clobber the alt source or cause a visible flap.
         if isUsingAltSource {
@@ -106,8 +142,7 @@ extension PlayerView {
           return
         }
         playback = resolved
-        replacePlaybackItem(with: makeItem(url: resolved.master))
-        applyQualityPreference(preferredQuality)
+        replacePlaybackItem(with: makeItem(url: resolved.url(forQuality: preferredQuality)))
         startPlayback()
 
         let started = await waitForPlaybackStart()
@@ -210,9 +245,10 @@ extension PlayerView {
 
   func waitForPlaybackStart() async -> Bool {
     let deadline = Date().addingTimeInterval(startupPlaybackTimeoutSeconds)
+    let startingItem = player.currentItem
 
     while Date() < deadline {
-      if Task.isCancelled {
+      if Task.isCancelled || startingItem !== player.currentItem {
         return false
       }
 
@@ -221,11 +257,11 @@ extension PlayerView {
           return false
         }
 
-        let currentSeconds = CMTimeGetSeconds(item.currentTime())
-        if player.timeControlStatus == .playing {
-          return true
-        }
-        if currentSeconds.isFinite, currentSeconds > 0.2 {
+        if model.startupProgress.observe(
+          clock: CMTimeGetSeconds(item.currentTime()),
+          isPlaying: player.timeControlStatus == .playing,
+          now: ProcessInfo.processInfo.systemUptime
+        ) {
           return true
         }
       }
@@ -247,20 +283,7 @@ extension PlayerView {
   /// "Auto" remains the safe choice for that case.
   func applyQualityPreference(_ option: String) {
     guard let playback else { return }
-
-    if option == "Auto" {
-      switchToSourceIfNeeded(playback.master)
-      player.currentItem?.preferredPeakBitRate = 0
-      return
-    }
-
-    guard let match = playback.qualities.first(where: { $0.name == option }) else {
-      switchToSourceIfNeeded(playback.master)
-      player.currentItem?.preferredPeakBitRate = 0
-      return
-    }
-
-    switchToSourceIfNeeded(match.url)
+    switchToSourceIfNeeded(playback.url(forQuality: option))
     player.currentItem?.preferredPeakBitRate = 0
   }
 
@@ -414,16 +437,11 @@ extension PlayerView {
     didRequestPlayback = true
     recordPlaybackEvent(
       "play_requested",
-      attributes: ["start_policy": isUsingAltSource ? "native_buffering" : "immediate"],
+      attributes: ["start_policy": "native_buffering"],
       metrics: ["rate": 1.0]
     )
-    if isUsingAltSource {
-      // Native HLS must be allowed to build its own startup/rebuffer cushion.
-      // playImmediately bypasses automaticallyWaitsToMinimizeStalling.
-      player.play()
-    } else {
-      player.playImmediately(atRate: 1.0)
-    }
+    // Let AVPlayer establish its startup/rebuffer cushion on both live sources.
+    player.play()
   }
 
   func startLatencyMonitor() {
@@ -688,6 +706,13 @@ extension PlayerView {
 
     guard didRequestPlayback else {
       stalledPlaybackSamples = 0
+      return
+    }
+    guard model.startupProgress.hasStarted else {
+      if ProcessInfo.processInfo.systemUptime - model.startupProgress.createdAt
+        >= startupPlaybackTimeoutSeconds {
+        triggerRecoveryIfAllowed(reason: "startup stalled")
+      }
       return
     }
 
@@ -1102,6 +1127,11 @@ extension PlayerView {
     }
 
     let status = player.timeControlStatus
+    model.startupProgress.observe(
+      clock: CMTimeGetSeconds(item.currentTime()),
+      isPlaying: status == .playing,
+      now: ProcessInfo.processInfo.systemUptime
+    )
     let hasSeekableRange = item.seekableTimeRanges.last?.timeRangeValue != nil
     let currentSeconds = CMTimeGetSeconds(item.currentTime())
     let hasAdvancedTime = currentSeconds.isFinite && currentSeconds > 0
@@ -1253,7 +1283,11 @@ extension PlayerView {
   /// or an in-progress scrub.
   func applyLiveLatencyCorrection() {
     guard isPlaybackActive else { return }
-    guard shouldPlayAltSource, !isVOD else { return }
+    guard !isVOD, model.startupProgress.allowsRateAdjustment(
+      isPlaying: player.timeControlStatus == .playing,
+      isLoading: isLoading,
+      shouldPlay: shouldPlayAltSource
+    ) else { return }
     // The adaptive-rate controller is tuned for the proxied Twitch path. On an
     // alternate source (e.g. a YouTube simulcast) leave the rate at 1.0 so the
     // latency comparison reflects plain AVPlayer behavior, not Twitch chasing.
@@ -1262,7 +1296,7 @@ extension PlayerView {
     let previousRate = player.rate
     let targetRate = desiredLivePlaybackRate(policy: activeLivePlaybackPolicy)
     guard abs(previousRate - targetRate) > 0.01 else { return }
-    player.playImmediately(atRate: targetRate)
+    player.rate = targetRate
     recordPlaybackEvent(
       "playback_rate_changed",
       attributes: [

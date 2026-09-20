@@ -49,7 +49,7 @@ enum AltSourceService {
 
   /// A resolved YouTube live source: the playable HLS master (when live) and the
   /// concurrent "watching now" viewer count, both derived from a single fetch.
-  struct YouTubeLive {
+  struct YouTubeLive: Sendable {
     var hlsMaster: URL
     var concurrentViewers: Int?
   }

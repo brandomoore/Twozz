@@ -220,7 +220,10 @@ extension PlayerView {
   }
 
   func replacePlaybackItem(with item: AVPlayerItem?) {
-    if item !== player.currentItem { resetPlaybackHealth() }
+    if item !== player.currentItem {
+      resetPlaybackHealth()
+      model.startupProgress = LivePlaybackStartup.Progress()
+    }
     model.playbackTelemetry.trackItem(item, source: playbackTelemetrySource)
     player.replaceCurrentItem(with: item)
     if let item {

@@ -159,6 +159,14 @@ YouTube source uses the existing bounded retry and Twitch fallback notice.
 
 ### Playback diagnostics
 
+Live playback lets AVPlayer buffer before starting instead of forcing an
+immediate first frame. With **Prefer YouTube** enabled, Twozz gives source
+selection up to four seconds before falling back to Twitch; it does not start
+Twitch and then automatically interrupt it with a YouTube switch. YouTube uses
+an eight-second forward-buffer preference to help absorb short delivery gaps.
+This can add initial loading time in exchange for smoother playback; it cannot
+eliminate upstream or network interruptions.
+
 When you return to a stream, Twozz restarts its stall-detection window rather
 than counting time spent in the background as a freeze. An empty buffer or
 expired playlist triggers a live-status check and recovery, not a "stream ended"
