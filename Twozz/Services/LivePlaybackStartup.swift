@@ -32,7 +32,8 @@ enum LivePlaybackStartup {
 
   /// A nonzero HLS clock may only be AVPlayer landing on its initial live
   /// timestamp. Require advancing playback, not that initial seek, before
-  /// exposing video or enabling the live rate/stability controllers.
+  /// enabling the live rate/stability controllers. Presentation follows
+  /// AVPlayer's native playing state without waiting for these samples.
   struct Progress {
     let createdAt: TimeInterval
     private(set) var hasStarted = false

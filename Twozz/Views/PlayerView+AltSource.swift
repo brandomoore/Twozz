@@ -153,12 +153,12 @@ extension PlayerView {
     model.altRecovery.beginItem()
     altYouTubeMasterURL = master
     replacePlaybackItem(with: makeAltSourceItem(url: master))
-    // Resolution can finish after the user pauses, scrubs, or backgrounds.
-    if shouldPlayAltSource { startPlayback() }
     isLoading = true
     isOffline = false
     errorMessage = nil
     altSourceStatus = "Buffering YouTube simulcast…"
+    // Resolution can finish after the user pauses, scrubs, or backgrounds.
+    if shouldPlayAltSource { startPlayback() }
     recordPlaybackEvent(
       "source_switch_completed",
       attributes: AltSourceService.resolverAttributes.merging([
@@ -341,7 +341,6 @@ extension PlayerView {
   /// genuine playback. Diagnostic-only; runs while the alt source is active.
   func updateAltSourceDiagnostics() {
     guard isUsingAltSource else { return }
-    if model.startupProgress.hasStarted, !altResolveInFlight { isLoading = false }
     if player.currentItem?.status == .failed {
       model.altRecovery.noteTerminalFailure()
     }

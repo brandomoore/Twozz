@@ -90,6 +90,17 @@ final class PlayerModel {
   var isOffline = false
   var isLoading = true
 
+  /// Presentation follows native playback immediately; rate/stability controls
+  /// still wait for sustained clock progress in `startupProgress`.
+  @discardableResult
+  func revealPlaybackIfStarted() -> Bool {
+    guard isLoading, !isOffline, errorMessage == nil,
+      player.currentItem?.status == .readyToPlay,
+      player.timeControlStatus == .playing else { return false }
+    isLoading = false
+    return true
+  }
+
   /// Live resolution AVPlayer's adaptive (Auto) selection is currently showing,
   /// e.g. "1080p60". Drives the "Auto (1080p60)" label on the quality button.
   var resolvedQualityName: String?

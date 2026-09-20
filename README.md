@@ -166,6 +166,8 @@ Twitch and then automatically interrupt it with a YouTube switch. YouTube uses
 an eight-second forward-buffer preference to help absorb short delivery gaps.
 This can add initial loading time in exchange for smoother playback; it cannot
 eliminate upstream or network interruptions.
+The loading screen clears when AVPlayer starts playing, independently of the
+longer startup-health check, so it does not cover video that's already audible.
 
 When you return to a stream, Twozz restarts its stall-detection window rather
 than counting time spent in the background as a freeze. An empty buffer or

@@ -1,9 +1,83 @@
+import AVFoundation
+import Combine
 import XCTest
 
 @testable import Twozz
 
 @MainActor
 final class LivePlaybackStartupTests: XCTestCase {
+  func testPresentationDoesNotRevealAnUnloadedPlayer() {
+    let model = PlayerModel()
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    XCTAssertTrue(model.isLoading)
+  }
+
+  func testNativePlaybackRevealsImmediatelyWithoutWaitingForHealthSamples() async throws {
+    let url = FileManager.default.temporaryDirectory
+      .appendingPathComponent("startup-presentation-\(UUID().uuidString).wav")
+    defer { try? FileManager.default.removeItem(at: url) }
+    try writeSilentAudio(to: url)
+    let model = PlayerModel()
+    model.player.isMuted = true
+    model.player.automaticallyWaitsToMinimizeStalling = true
+    let presented = expectation(description: "Native playback reveals the loading screen")
+    var observation: AnyCancellable?
+    var presentationCount = 0
+    observation = model.player.publisher(for: \.timeControlStatus)
+      .receive(on: RunLoop.main)
+      .sink { _ in
+        if model.revealPlaybackIfStarted() {
+          presentationCount += 1
+          XCTAssertFalse(model.startupProgress.hasStarted)
+          XCTAssertFalse(model.startupProgress.allowsRateAdjustment(
+            isPlaying: true, isLoading: model.isLoading, shouldPlay: true))
+          presented.fulfill()
+        }
+      }
+    defer {
+      observation?.cancel()
+      model.player.pause()
+      model.player.replaceCurrentItem(with: nil)
+    }
+    model.player.replaceCurrentItem(with: AVPlayerItem(url: url))
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    model.player.play()
+    await fulfillment(of: [presented], timeout: 5)
+    XCTAssertFalse(model.isLoading)
+    XCTAssertEqual(presentationCount, 1)
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    XCTAssertTrue(model.player.automaticallyWaitsToMinimizeStalling)
+
+    model.isLoading = true
+    model.errorMessage = "Cannot play stream"
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    model.errorMessage = nil
+    model.isOffline = true
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    model.isOffline = false
+    model.player.pause()
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    model.player.replaceCurrentItem(with: nil)
+    XCTAssertFalse(model.revealPlaybackIfStarted())
+    XCTAssertTrue(model.isLoading)
+  }
+
+  private func writeSilentAudio(to url: URL) throws {
+    let file = try AVAudioFile(forWriting: url, settings: [
+      AVFormatIDKey: kAudioFormatLinearPCM,
+      AVSampleRateKey: 44_100,
+      AVNumberOfChannelsKey: 1,
+      AVLinearPCMBitDepthKey: 16,
+      AVLinearPCMIsFloatKey: false,
+    ])
+    let buffer = try XCTUnwrap(
+      AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 88_200))
+    buffer.frameLength = buffer.frameCapacity
+    let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+    samples.update(repeating: 0, count: Int(buffer.frameLength))
+    try file.write(from: buffer)
+  }
+
   func testNonzeroInitialHLSTimestampDoesNotMeanPlaybackStarted() {
     var progress = LivePlaybackStartup.Progress(now: 0)
     XCTAssertFalse(progress.observe(clock: 3597, isPlaying: false, now: 1))

@@ -111,6 +111,15 @@ extension PlayerView {
       setIdleTimer(disabled: true)
       trackpad.start()
     }
+    .onReceive(player.publisher(for: \.timeControlStatus).receive(on: RunLoop.main)) { _ in
+      // Read the current item/status rather than a queued notification's value,
+      // which can belong to an item that was replaced in the meantime.
+      guard model.revealPlaybackIfStarted() else { return }
+      recordPlaybackEvent(
+        "playback_presented",
+        flags: ["startup_complete": model.startupProgress.hasStarted]
+      )
+    }
     .onReceive(
       NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
     ) { _ in

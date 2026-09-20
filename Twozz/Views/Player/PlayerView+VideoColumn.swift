@@ -42,9 +42,8 @@ extension PlayerView {
         // avatar, name, and a native spinner. Anchored as an overlay on the
         // video so it tracks the *exact* video frame in every chat layout — the
         // shrunken column in side mode, full-bleed in overlay/glass — instead of
-        // escaping to fullscreen. Cross-fades to live video once playback
-        // starts, so opening a stream reads as a quick sharpen instead of a
-        // black "Loading…" gap.
+        // escaping to fullscreen. Reveal video as soon as native playback
+        // starts; fading this cover would hide video that's already audible.
         .overlay {
           StreamLoadingView(
             posterURL: posterURL,
@@ -54,7 +53,7 @@ extension PlayerView {
           .padding(.trailing, loadingChatInset)
           .opacity(isLoading && errorMessage == nil && !isOffline ? 1 : 0)
           .allowsHitTesting(false)
-          .animation(.easeOut(duration: 0.45), value: isLoading)
+          .animation(nil, value: isLoading)
         }
 
       if isAudioOnlyActive, !isLoading, errorMessage == nil, !isOffline {
