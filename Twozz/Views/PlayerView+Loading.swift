@@ -23,6 +23,7 @@ extension PlayerView {
   func load(maxAttempts: Int = 3, reason: String = "initial", resetMetadata: Bool = true)
     async
   {
+    guard !Task.isCancelled else { return }
     // While the experimental alternate source (YouTube simulcast) is active the
     // player holds a plain non-Twitch item. Every `load()` rebuilds the proxied
     // Twitch pipeline via `makeItem` and re-arms the Twitch control loops, which
@@ -36,6 +37,7 @@ extension PlayerView {
       )
       return
     }
+    stopPlaybackWatchdog()
     let telemetrySessionID = model.playbackTelemetry.sessionID
     let sourceGeneration = model.altRecovery.generation
     let loadingChannel = activeChannel
@@ -134,7 +136,7 @@ extension PlayerView {
         }
         return
       } catch {
-        guard telemetrySessionID == model.playbackTelemetry.sessionID,
+        guard !Task.isCancelled, telemetrySessionID == model.playbackTelemetry.sessionID,
           loadingChannel == activeChannel, sourceGeneration == model.altRecovery.generation else { return }
         lastError = error
         recordPlaybackEvent(
@@ -157,24 +159,28 @@ extension PlayerView {
     stopPlaybackWatchdog()
     stopLatencyMonitor()
 
-    // Before surfacing a hard error, decide whether this is simply an offline /
-    // ended stream. A definitive `.offline` resolve error is already a strong
-    // signal; otherwise confirm authoritatively via GraphQL so we never show the
-    // offline state for a transient failure on a channel that's actually live.
+    // An unavailable HLS playlist can mean expired media, not an ended stream.
+    // Only a successful live-status lookup may label the channel offline.
     let resolvedOffline = (lastError as? PlaybackError) == .offline
     if resolvedOffline || lastError == nil || lastError is LoadTimeoutError {
       let status = await PlaybackService.streamLiveStatus(for: activeChannel)
-      guard telemetrySessionID == model.playbackTelemetry.sessionID,
+      guard !Task.isCancelled, telemetrySessionID == model.playbackTelemetry.sessionID,
         loadingChannel == activeChannel, sourceGeneration == model.altRecovery.generation,
         !isUsingAltSource else { return }
-      if status == .offline || (resolvedOffline && status != .live) {
+      recordPlaybackEvent(
+        "stream_status_checked",
+        attributes: ["status": status.rawValue, "reason": "load_failed"]
+      )
+      if status == .offline {
         presentOfflineState()
         return
       }
     }
 
     let fallback = "Failed to load stream (\(reason))."
-    errorMessage = lastError?.localizedDescription ?? fallback
+    errorMessage = resolvedOffline
+      ? String(localized: "Couldn't load the live video. Please try again.")
+      : (lastError?.localizedDescription ?? fallback)
     isLoading = false
     recordPlaybackEvent(
       "load_failed",
@@ -488,6 +494,7 @@ extension PlayerView {
     playbackWatchdogTask = Task {
       while !Task.isCancelled {
         await MainActor.run {
+          guard !Task.isCancelled else { return }
           samplePlaybackHealth()
         }
         try? await Task.sleep(for: .seconds(playbackWatchdogIntervalSeconds))
@@ -498,21 +505,20 @@ extension PlayerView {
   func stopPlaybackWatchdog() {
     playbackWatchdogTask?.cancel()
     playbackWatchdogTask = nil
-    lastObservedPlaybackTimeSeconds = nil
-    stalledPlaybackSamples = 0
-    isRecoveringPlayback = false
-    lastRecoveryAttemptAt = Date.distantPast
-    lastLiveResyncAt = Date.distantPast
-    liveResyncAttempts = 0
+    resetPlaybackHealth()
+  }
+
+  func resetPlaybackHealth() {
+    model.offlineProbeTask?.cancel()
+    model.offlineProbeTask = nil
+    mon.resetPlaybackHealth()
     lastStallNotificationAt = Date.distantPast
-    liveStallWaitingSince = nil
-    lastLiveEdgeSeconds = nil
-    liveEdgeFrozenSince = nil
-    softStallSince = nil
-    lastSoftStallNudgeAt = Date.distantPast
-    lastFrozenPlayheadNudgeAt = Date.distantPast
-    offlineProbeInFlight = false
-    lastOfflineProbeAt = Date.distantPast
+    diagWasStalled = false
+    diagIsFrozen = false
+    diagFrozenSince = nil
+    diagLastPlayheadSeconds = nil
+    diagLastSampleAt = nil
+    videoDecodeFrozenSince = nil
   }
 
   /// Stop claiming the live edge when the app returns from the background.
@@ -531,6 +537,7 @@ extension PlayerView {
   func handleReturnToForeground() {
     guard let leftAt = backgroundedAt else { return }
     backgroundedAt = nil
+    resetPlaybackHealth()
     let backgroundDuration = Date().timeIntervalSince(leftAt)
     guard backgroundDuration >= liveResumeBehindThresholdSeconds else { return }
     guard !isVOD, pinnedToLive, !isUserPaused, !isScrubbing else { return }
@@ -544,6 +551,7 @@ extension PlayerView {
   }
 
   func triggerRecoveryIfAllowed(reason: String) {
+    guard !isLoading, !isOffline, !isVOD, !isUsingAltSource, shouldPlayAltSource else { return }
     guard !isRecoveringPlayback else {
       recordPlaybackEvent(
         "recovery_suppressed",
@@ -570,8 +578,10 @@ extension PlayerView {
       attributes: ["reason": reason]
     )
     let telemetrySessionID = model.playbackTelemetry.sessionID
+    let generation = mon.healthGeneration
     Task {
-      guard telemetrySessionID == model.playbackTelemetry.sessionID else { return }
+      guard telemetrySessionID == model.playbackTelemetry.sessionID,
+        generation == mon.healthGeneration, !Task.isCancelled else { return }
       await recoverFromPlaybackStall(reason: reason)
     }
   }
@@ -636,7 +646,7 @@ extension PlayerView {
     // reloads — must not run: it seeks the plain alt item backward (accumulating
     // latency) or rebuilds the Twitch pipeline. Leave the alt item to plain
     // AVPlayer so the latency comparison is honest.
-    guard !isUsingAltSource else {
+    guard !isUsingAltSource, !isVOD else {
       stalledPlaybackSamples = 0
       lastObservedPlaybackTimeSeconds = nil
       liveStallWaitingSince = nil
@@ -656,15 +666,8 @@ extension PlayerView {
     // An intentional viewer pause (DVR rewind) holds the playhead in place; that
     // is not a stall, so reset the watchdog counters and bail before they trip.
     // An in-progress scrub holds/repositions the playhead the same way.
-    guard !isUserPaused, !isScrubbing else {
-      stalledPlaybackSamples = 0
-      lastObservedPlaybackTimeSeconds = nil
-      liveStallWaitingSince = nil
-      softStallSince = nil
-      diagWasStalled = false
-      diagIsFrozen = false
-      diagFrozenSince = nil
-      videoDecodeFrozenSince = nil
+    guard shouldPlayAltSource else {
+      resetPlaybackHealth()
       return
     }
 
@@ -751,57 +754,13 @@ extension PlayerView {
       player.timeControlStatus == .waitingToPlayAtSpecifiedRate
       && (item.isPlaybackBufferEmpty || !item.isPlaybackLikelyToKeepUp)
 
-    // End-of-stream by a frozen live edge. A live broadcast keeps appending
-    // segments, so its seekable edge advances; an ended one freezes it. This is
-    // independent of the waiting/stall state (which the anti-stall slow-down keeps
-    // flickering, so the starvation timer below could otherwise never mature) and
-    // works in stability mode too. A merely-struggling stream still advances its
-    // edge, so it won't trip this.
-    //
-    // Deliberately NOT gated on `pinnedToLive`: edge freeze is a property of the
-    // broadcast, not of where the viewer sits in the window. A viewer who has
-    // drifted off the edge (a DVR rewind) would otherwise lose every local
-    // offline path and, when Twitch's status lookup lags at `.unknown` for the
-    // ended broadcast, be stranded on a frozen final frame forever. The
-    // `starved` requirement on the force/probe arms keeps a rewound viewer who
-    // still has buffered content ahead from being yanked offline mid-playback.
-    if !isVOD {
-      let now = Date()
-      let edge = liveSeekableEdgeSeconds(item)
-      let advanced = edge.map { $0 > (lastLiveEdgeSeconds ?? -.greatestFiniteMagnitude) + 0.5 } ?? false
-      if let edge { lastLiveEdgeSeconds = max(lastLiveEdgeSeconds ?? edge, edge) }
-
-      if advanced {
-        liveEdgeFrozenSince = nil
-      } else if lastLiveEdgeSeconds != nil {
-        if liveEdgeFrozenSince == nil { liveEdgeFrozenSince = now }
-        let frozenFor = now.timeIntervalSince(liveEdgeFrozenSince ?? now)
-        let starved = (bufferAheadSeconds(item) ?? 0) < 1.0
-        if frozenFor >= endOfStreamStalledForceOfflineSeconds, starved, isHardStallSignal {
-          // Unambiguously ended: the edge has stopped advancing AND playback is
-          // hard-stalled on a starved buffer — there is no more content to play
-          // and none is arriving. Surface offline now, before the hard-stall
-          // reload path (which wipes this freeze timer via stopPlaybackWatchdog)
-          // can fire and trap a dead stream in a reload/frozen-frame loop. Twitch's
-          // status lookup can't be trusted here (it lags at `.unknown` for an
-          // ended/raided stream), so this acts on local signals alone.
-          if showLatencyDiagnostics { logDiagnosticsEvent("offline forced (edge frozen + hard stall)") }
-          presentOfflineState()
-        } else if frozenFor >= endOfStreamEdgeForceOfflineSeconds, starved {
-          // Edge frozen long enough with an empty buffer even without a clean hard-
-          // stall signal (e.g. the anti-stall slow-down keeps flickering the state):
-          // don't sit on a frozen frame forever waiting on Twitch's `.unknown`.
-          presentOfflineState()
-        } else if frozenFor >= endOfStreamEdgeFrozenSeconds, starved {
-          // Buffer drained and the edge has been frozen a while: confirm with
-          // Twitch. Gated on `starved` so a rewound DVR viewer still playing
-          // buffered content is never probed (and possibly yanked) offline.
-          probeOfflineIfStreamEnded()
-        }
-      }
-    } else {
-      liveEdgeFrozenSince = nil
-      lastLiveEdgeSeconds = nil
+    // A frozen playlist can also be a connection failure or an expired timeline
+    // after suspension. Check Twitch, then reload if it is live or unknown.
+    // Buffered DVR playback is left alone even if the broadcast has ended.
+    let frozenFor = mon.observeLiveEdge(liveSeekableEdgeSeconds(item), at: Date())
+    if frozenFor >= endOfStreamEdgeFrozenSeconds, (bufferAheadSeconds(item) ?? 0) < 1 {
+      triggerRecoveryIfAllowed(reason: "frozen live edge")
+      return
     }
 
     if stalledPlaybackSamples >= stalledPlaybackThresholdSamples,
@@ -928,31 +887,40 @@ extension PlayerView {
   /// it freely. Only a definitive `.offline` acts; `.live`/`.unknown` are
   /// ignored so transient network hiccups never surface a false offline screen.
   func probeOfflineIfStreamEnded() {
-    let now = Date()
-    guard !offlineProbeInFlight,
-      now.timeIntervalSince(lastOfflineProbeAt) >= offlineProbeCooldownSeconds
+    guard !isLoading, !isOffline, !isVOD, !isUsingAltSource, !isRecoveringPlayback,
+      shouldPlayAltSource, let item = player.currentItem,
+      let generation = mon.beginOfflineProbe(at: Date(), cooldown: offlineProbeCooldownSeconds)
     else { return }
-    offlineProbeInFlight = true
-    lastOfflineProbeAt = now
     let channel = activeChannel
-    Task {
+    let sessionID = model.playbackTelemetry.sessionID
+    model.offlineProbeTask = Task { @MainActor in
       let status = await PlaybackService.streamLiveStatus(for: channel)
-      await MainActor.run {
-        offlineProbeInFlight = false
-        guard !isOffline, !isUserPaused, !isScrubbing,
-          channel == activeChannel
-        else { return }
-        if status == .offline {
-          if showLatencyDiagnostics { logDiagnosticsEvent("offline confirmed (stream ended)") }
-          presentOfflineState()
-        }
+      guard !Task.isCancelled, mon.finishOfflineProbe(generation: generation) else { return }
+      model.offlineProbeTask = nil
+      guard !isLoading, !isOffline, !isVOD, !isUsingAltSource, shouldPlayAltSource,
+        channel == activeChannel, sessionID == model.playbackTelemetry.sessionID,
+        item === player.currentItem
+      else { return }
+      recordPlaybackEvent(
+        "stream_status_checked",
+        attributes: ["status": status.rawValue, "reason": "offline_probe"]
+      )
+      if status == .offline {
+        if showLatencyDiagnostics { logDiagnosticsEvent("offline confirmed (stream ended)") }
+        presentOfflineState()
       }
     }
   }
 
   func recoverFromPlaybackStall(reason: String) async {
-    guard !isRecoveringPlayback else { return }
-    guard !isOffline else { return }
+    guard !isRecoveringPlayback, !isOffline, !isLoading, !isVOD, !isUsingAltSource,
+      shouldPlayAltSource, let item = player.currentItem else { return }
+    model.offlineProbeTask?.cancel()
+    model.offlineProbeTask = nil
+    mon.offlineProbeInFlight = false
+    let generation = mon.healthGeneration
+    let channel = activeChannel
+    let sourceGeneration = model.altRecovery.generation
     recordPlaybackTelemetrySnapshot()
     let recoverySessionID = model.playbackTelemetry.sessionID
     let recoveryStartedAt = ProcessInfo.processInfo.systemUptime
@@ -965,7 +933,7 @@ extension PlayerView {
     )
     defer {
       if recoverySessionID == model.playbackTelemetry.sessionID {
-        isRecoveringPlayback = false
+        if generation == mon.healthGeneration { isRecoveringPlayback = false }
         recordPlaybackEvent(
           "recovery_completed",
           attributes: [
@@ -981,8 +949,15 @@ extension PlayerView {
     // once a broadcast ends), authoritatively check whether the channel is still
     // live. Only act on a definitive `.offline`; `.live`/`.unknown` fall through
     // to the normal reload-based recovery for genuine transient stalls.
-    let liveStatus = await PlaybackService.streamLiveStatus(for: activeChannel)
-    guard recoverySessionID == model.playbackTelemetry.sessionID else { return }
+    let liveStatus = await PlaybackService.streamLiveStatus(for: channel)
+    guard !Task.isCancelled, recoverySessionID == model.playbackTelemetry.sessionID,
+      generation == mon.healthGeneration, sourceGeneration == model.altRecovery.generation,
+      channel == activeChannel, item === player.currentItem,
+      !isUsingAltSource, !isVOD, shouldPlayAltSource else { return }
+    recordPlaybackEvent(
+      "stream_status_checked",
+      attributes: ["status": liveStatus.rawValue, "reason": reason]
+    )
     if liveStatus == .offline {
       recordPlaybackEvent(
         "recovery_aborted",
@@ -1278,7 +1253,7 @@ extension PlayerView {
   /// or an in-progress scrub.
   func applyLiveLatencyCorrection() {
     guard isPlaybackActive else { return }
-    guard !isUserPaused, !isScrubbing, !isVOD else { return }
+    guard shouldPlayAltSource, !isVOD else { return }
     // The adaptive-rate controller is tuned for the proxied Twitch path. On an
     // alternate source (e.g. a YouTube simulcast) leave the rate at 1.0 so the
     // latency comparison reflects plain AVPlayer behavior, not Twitch chasing.

@@ -240,6 +240,7 @@ final class PlayerModel {
   var vodTimeObserver: Any?
   var latencyTask: Task<Void, Never>?
   var playbackWatchdogTask: Task<Void, Never>?
+  @ObservationIgnored var offlineProbeTask: Task<Void, Never>?
   var rateControlTask: Task<Void, Never>?
   var playbackTelemetryTask: Task<Void, Never>?
 

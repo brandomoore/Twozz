@@ -53,7 +53,7 @@ struct ChannelMetadata {
 /// "offline" empty state. `.unknown` means the lookup itself failed (network,
 /// parse, throttling) and must NOT be treated as offline — only `.offline`
 /// positively confirms the broadcast has ended.
-enum StreamLiveStatus {
+enum StreamLiveStatus: String {
     case live
     case offline
     case unknown
@@ -232,6 +232,10 @@ struct PlaybackService {
         guard let (data, response) = try? await networkSession.data(for: req) else { return .unknown }
         let status = (response as? HTTPURLResponse)?.statusCode ?? -1
         guard (200...299).contains(status) else { return .unknown }
+        return parseStreamLiveStatus(data)
+    }
+
+    static func parseStreamLiveStatus(_ data: Data) -> StreamLiveStatus {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return .unknown }
         // A GraphQL `errors` array means we can't trust the payload — stay unknown.
         if json["errors"] != nil { return .unknown }
@@ -241,12 +245,14 @@ struct PlaybackService {
         // disappears when the broadcast ends. An explicitly-null `user` means the
         // login doesn't exist, which we also treat as offline.
         guard dataObj.keys.contains("user") else { return .unknown }
-        let userObj = dataObj["user"] as? [String: Any]
-        guard let userObj else { return .offline }
+        if dataObj["user"] is NSNull { return .offline }
+        guard let userObj = dataObj["user"] as? [String: Any] else { return .unknown }
 
         guard userObj.keys.contains("stream") else { return .unknown }
-        let streamObj = userObj["stream"] as? [String: Any]
-        return streamObj == nil ? .offline : .live
+        if userObj["stream"] is NSNull { return .offline }
+        guard let streamObj = userObj["stream"] as? [String: Any],
+              let id = streamObj["id"] as? String, !id.isEmpty else { return .unknown }
+        return .live
     }
 
     /// The channel's in-progress recording: the VOD that backs the *current* live

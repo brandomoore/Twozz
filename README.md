@@ -159,6 +159,11 @@ YouTube source uses the existing bounded retry and Twitch fallback notice.
 
 ### Playback diagnostics
 
+When you return to a stream, Twozz restarts its stall-detection window rather
+than counting time spent in the background as a freeze. An empty buffer or
+expired playlist triggers a live-status check and recovery, not a "stream ended"
+verdict: that message requires Twitch to confirm the channel is offline.
+
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports
 can be examined after the fact. Logging samples playback state about every two
 seconds and records noteworthy state changes, stalls, access/error-log updates,

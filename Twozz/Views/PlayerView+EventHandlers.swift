@@ -117,6 +117,7 @@ extension PlayerView {
       backgroundedAt = Date()
       recordPlaybackEvent("app_backgrounded")
       recordPlaybackTelemetrySnapshot()
+      resetPlaybackHealth()
       Task { await model.playbackTelemetry.flush() }
     }
     .onReceive(

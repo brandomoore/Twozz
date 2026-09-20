@@ -53,11 +53,10 @@ final class PlaybackMonitorBox {
   /// When the player first entered a sustained "waiting with a starved buffer"
   /// state. Drives the authoritative end-of-stream (offline) probe.
   var liveStallWaitingSince: Date?
-  /// Highest live seekable-edge position seen, and when it stopped advancing.
-  /// An ended broadcast freezes the edge, which is a cleaner end-of-stream signal
-  /// than the waiting/stall state the anti-stall slow-down keeps flickering.
+  /// Live-edge progress is a recovery signal, not proof the broadcast ended.
   var lastLiveEdgeSeconds: Double?
   var liveEdgeFrozenSince: Date?
+  private(set) var healthGeneration = UUID()
   /// Guards against overlapping offline probes and rate-limits them.
   var offlineProbeInFlight = false
   var lastOfflineProbeAt = Date.distantPast
@@ -83,6 +82,61 @@ final class PlaybackMonitorBox {
   /// When we last nudged a buffer-agnostic frozen playhead (the `toMinimizeStalls`
   /// deadlock that satisfies neither the hard- nor soft-stall buffer signatures).
   var lastFrozenPlayheadNudgeAt = Date.distantPast
+
+  func resetPlaybackHealth() {
+    healthGeneration = UUID()
+    lastObservedPlaybackTimeSeconds = nil
+    stalledPlaybackSamples = 0
+    isRecoveringPlayback = false
+    lastRecoveryAttemptAt = .distantPast
+    lastLiveResyncAt = .distantPast
+    liveResyncAttempts = 0
+    liveStallWaitingSince = nil
+    lastLiveEdgeSeconds = nil
+    liveEdgeFrozenSince = nil
+    softStallSince = nil
+    lastSoftStallNudgeAt = .distantPast
+    lastFrozenPlayheadNudgeAt = .distantPast
+    offlineProbeInFlight = false
+    lastOfflineProbeAt = .distantPast
+  }
+
+  func observeLiveEdge(_ edge: Double?, at now: Date) -> TimeInterval {
+    guard let edge, edge.isFinite, edge > 0 else {
+      lastLiveEdgeSeconds = nil
+      liveEdgeFrozenSince = nil
+      return 0
+    }
+    guard let previous = lastLiveEdgeSeconds else {
+      lastLiveEdgeSeconds = edge
+      liveEdgeFrozenSince = nil
+      return 0
+    }
+    // AVPlayer can rebase its timeline after resuming or switching renditions.
+    // Comparing that new timeline with the old high-water mark looks frozen.
+    if abs(edge - previous) > 0.5 {
+      lastLiveEdgeSeconds = edge
+      liveEdgeFrozenSince = nil
+      return 0
+    }
+    if liveEdgeFrozenSince == nil { liveEdgeFrozenSince = now }
+    return now.timeIntervalSince(liveEdgeFrozenSince ?? now)
+  }
+
+  func beginOfflineProbe(at now: Date, cooldown: TimeInterval) -> UUID? {
+    guard !offlineProbeInFlight, now.timeIntervalSince(lastOfflineProbeAt) >= cooldown else {
+      return nil
+    }
+    offlineProbeInFlight = true
+    lastOfflineProbeAt = now
+    return healthGeneration
+  }
+
+  func finishOfflineProbe(generation: UUID) -> Bool {
+    guard generation == healthGeneration, offlineProbeInFlight else { return false }
+    offlineProbeInFlight = false
+    return true
+  }
 }
 
 /// The only latency state SwiftUI observes for the on-screen badge. Updated once
@@ -555,4 +609,3 @@ final class ScrubInputCoordinator {
     }
   }
 }
-

@@ -285,20 +285,10 @@ struct PlayerView: View {
     get { mon.liveStallWaitingSince }
     nonmutating set { mon.liveStallWaitingSince = newValue }
   }
-  /// Highest live seekable-edge position seen this session, and when it last
-  /// stopped advancing — used to detect an ended broadcast (the edge freezes)
-  /// independently of the flaky waiting/stall state.
-  var lastLiveEdgeSeconds: Double? {
-    get { mon.lastLiveEdgeSeconds }
-    nonmutating set { mon.lastLiveEdgeSeconds = newValue }
-  }
+  /// Live-edge progress within the current playback-health window.
   var liveEdgeFrozenSince: Date? {
     get { mon.liveEdgeFrozenSince }
     nonmutating set { mon.liveEdgeFrozenSince = newValue }
-  }
-  var offlineProbeInFlight: Bool {
-    get { mon.offlineProbeInFlight }
-    nonmutating set { mon.offlineProbeInFlight = newValue }
   }
   var lastOfflineProbeAt: Date {
     get { mon.lastOfflineProbeAt }
@@ -542,27 +532,10 @@ struct PlayerView: View {
   let offlineProbeStallSeconds: Double = 6
   /// Minimum spacing between authoritative offline probes while still stuck.
   let offlineProbeCooldownSeconds: Double = 8
-  /// End-of-stream detection by a frozen live edge. A live broadcast keeps
-  /// appending segments, so its seekable edge advances; an ended one freezes it.
-  /// Once the edge hasn't advanced for this long while we're trying to follow
-  /// live, ask Twitch whether the channel is still up (this is independent of the
-  /// waiting/stall state, which the anti-stall slow-down keeps flickering). A
-  /// merely-struggling stream still advances its edge, so it won't trip this.
+  /// A frozen edge with a drained buffer needs a live-status check and recovery.
+  /// Interrupted networking and expired segments can look identical to an ended
+  /// broadcast, so this timeout must never declare a channel offline by itself.
   let endOfStreamEdgeFrozenSeconds: Double = 8
-  /// Safety net for when Twitch's status lookup keeps returning `.unknown` for an
-  /// ended stream: if the edge has been frozen this long AND the buffer is empty,
-  /// surface the offline state anyway rather than sit on a dead frame forever.
-  /// Kept tight (a frozen edge + drained buffer is an unmistakably dead stream)
-  /// so the viewer reaches the offline screen — with its Try Again button —
-  /// quickly instead of staring at a frozen final frame.
-  let endOfStreamEdgeForceOfflineSeconds: Double = 12
-  /// Fast end-of-stream force-offline for the unambiguous "ended" signature: the
-  /// live edge has stopped advancing AND playback is hard-stalled on a starved
-  /// buffer. A struggling-but-live stream keeps advancing its edge (clearing the
-  /// freeze timer) and a deep-buffer stability ride stays non-starved, so neither
-  /// trips this. Kept below the hard-stall reload window so a dead stream surfaces
-  /// offline before a (futile) recovery reload can reset the freeze timer.
-  let endOfStreamStalledForceOfflineSeconds: Double = 8
   /// Soft-stall deadlock recovery. AVPlayer can park in
   /// `.waitingToPlayAtSpecifiedRate` (reason `.evaluatingBufferingRate` or
   /// `.toMinimizeStalls`) even while it holds a perfectly healthy forward buffer:
