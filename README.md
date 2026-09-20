@@ -177,6 +177,11 @@ longer startup-health check, so it does not cover video that's already audible.
 The in-player stream title stays with the channel across source switches and
 playback retries; changing channels clears it before fetching the new metadata.
 
+Closing a live player refreshes the Home rails and the originating Following,
+category, or search list. Stream-card identity follows the streamer, not the
+broadcast ID or ranking, so tvOS can retain focus through live-status updates
+and reordering. Return refreshes do not force focus back to the first card.
+
 When you return to a stream, Twozz restarts its stall-detection window rather
 than counting time spent in the background as a freeze. An empty buffer or
 expired playlist triggers a live-status check and recovery, not a "stream ended"

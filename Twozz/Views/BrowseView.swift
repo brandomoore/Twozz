@@ -109,6 +109,7 @@ struct CategoryStreamsView: View {
   let category: TwitchCategory
   @Binding var selectedChannel: FollowedChannel?
   @Binding var channelPageTarget: ChannelPageTarget?
+  @Environment(PlaybackReturnRefreshCoordinator.self) private var playbackReturnRefresh
 
   @State private var service = BrowseService()
   @FocusState private var focusedStreamID: String?
@@ -126,6 +127,12 @@ struct CategoryStreamsView: View {
     )
   }
   private let gridBottomInset: CGFloat = 12
+
+  private func preparePlaybackReturn() {
+    playbackReturnRefresh.prepareOrigin {
+      await service.loadStreams(for: category)
+    }
+  }
 
   var body: some View {
     ZStack(alignment: .top) {
@@ -179,19 +186,26 @@ struct CategoryStreamsView: View {
               .padding(.top, 8)
           } else {
             LazyVGrid(columns: columns, spacing: cardSpacing) {
-              ForEach(service.categoryStreams) { channel in
-                let isFocused = focusedStreamID == channel.id
+              ForEach(service.categoryStreams, id: \.channelKey) { channel in
+                let isFocused = focusedStreamID == channel.channelKey
                 StreamChannelCard(
                   channel: channel,
                   isFocused: isFocused,
-                  onWatch: { selectedChannel = $0 },
-                  onGoToChannel: { channelPageTarget = ChannelPageTarget(channel: $0) }
+                  onWatch: {
+                    preparePlaybackReturn()
+                    selectedChannel = $0
+                  },
+                  onGoToChannel: {
+                    preparePlaybackReturn()
+                    channelPageTarget = ChannelPageTarget(channel: $0)
+                  }
                 )
                 .contentShape(RoundedRectangle(cornerRadius: CardMetrics.gridCardCornerRadius))
                 .focusable(true)
-                .focused($focusedStreamID, equals: channel.id)
+                .focused($focusedStreamID, equals: channel.channelKey)
                 .focusEffectDisabled()
                 .onTapGesture {
+                  preparePlaybackReturn()
                   selectedChannel = channel
                 }
                 .zIndex(isFocused ? 2 : 0)
@@ -212,11 +226,13 @@ struct CategoryStreamsView: View {
     .task(id: category.id) {
       await service.loadStreams(for: category)
     }
-    .onChange(of: service.categoryStreams) { _, streams in
-      if focusedStreamID == nil, let first = streams.first {
+    .onChange(of: service.categoryStreams) { previous, streams in
+      if previous.isEmpty, focusedStreamID == nil, let first = streams.first {
         Task {
           try? await Task.sleep(for: .milliseconds(150))
-          await MainActor.run { focusedStreamID = first.id }
+          guard !Task.isCancelled, selectedChannel == nil, channelPageTarget == nil, focusedStreamID == nil,
+            service.categoryStreams.contains(where: { $0.channelKey == first.channelKey }) else { return }
+          focusedStreamID = first.channelKey
         }
       }
     }

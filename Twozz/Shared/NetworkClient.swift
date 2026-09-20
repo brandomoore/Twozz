@@ -13,6 +13,8 @@ import Foundation
 /// Intentionally Foundation-only (no tvOS-only APIs) so the same infrastructure
 /// can back a future iOS target.
 enum NetworkClient {
+  typealias DataLoader = @Sendable (URLRequest) async throws -> (Data, URLResponse)
+
   /// JSON/REST/GraphQL traffic (Helix, GQL, 7TV/BTTV/FFZ, YouTube Data API, …).
   /// Tighter timeouts than `URLSession.shared`'s 60s default so a stalled API
   /// call fails fast instead of hanging a refresh loop.

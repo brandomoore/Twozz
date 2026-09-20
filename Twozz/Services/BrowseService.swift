@@ -11,6 +11,13 @@ final class BrowseService {
     private(set) var categoryStreams: [FollowedChannel] = []
     private(set) var isLoadingStreams = false
     private(set) var streamsErrorMessage: String?
+    private var streamsCategoryID: String?
+    private var streamsRequestID = UUID()
+    private let loadData: NetworkClient.DataLoader
+
+    init(loadData: @escaping NetworkClient.DataLoader = { try await NetworkClient.api.data(for: $0) }) {
+        self.loadData = loadData
+    }
 
     // MARK: - Public API
 
@@ -45,17 +52,25 @@ final class BrowseService {
     }
 
     func loadStreams(for category: TwitchCategory) async {
+        let requestID = UUID()
+        streamsRequestID = requestID
         isLoadingStreams = true
         streamsErrorMessage = nil
-        categoryStreams = []
-        defer { isLoadingStreams = false }
+        if streamsCategoryID != category.id { categoryStreams = [] }
+        streamsCategoryID = category.id
+        defer {
+            if streamsRequestID == requestID { isLoadingStreams = false }
+        }
 
         do {
             // Twitch's anonymous GQL client rejects cursor pagination (integrity
             // challenge), so fetch the full set in one request. 100 is the max
             // the API allows for `first`.
-            categoryStreams = try await fetchStreams(for: category, limit: 100)
+            let streams = try await fetchStreams(for: category, limit: 100)
+            guard !Task.isCancelled, streamsRequestID == requestID else { return }
+            categoryStreams = streams
         } catch {
+            guard !Task.isCancelled, streamsRequestID == requestID else { return }
             streamsErrorMessage = "Could not load streams for \(category.name)."
         }
     }
@@ -217,7 +232,7 @@ final class BrowseService {
         req.httpBody = try JSONSerialization.data(
             withJSONObject: TwitchAPIClient.graphQLBody(query: query, variables: variables))
 
-        let (data, response) = try await NetworkClient.api.data(for: req)
+        let (data, response) = try await loadData(req)
         return try TwitchAPIClient.validatedData(data, response)
     }
 }

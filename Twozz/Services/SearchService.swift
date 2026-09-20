@@ -9,12 +9,19 @@ final class SearchService {
     private(set) var isSearching = false
     private(set) var errorMessage: String?
     private(set) var query = ""
+    private var requestID = UUID()
+    private let loadData: NetworkClient.DataLoader
+
+    init(loadData: @escaping NetworkClient.DataLoader = { try await NetworkClient.api.data(for: $0) }) {
+        self.loadData = loadData
+    }
 
     var hasResults: Bool { !channelResults.isEmpty || !categoryResults.isEmpty }
 
     // MARK: - Public API
 
     func clear() {
+        requestID = UUID()
         query = ""
         channelResults = []
         categoryResults = []
@@ -22,7 +29,9 @@ final class SearchService {
         isSearching = false
     }
 
-    func search(_ rawQuery: String) async {
+    func search(_ rawQuery: String, preservingResultsOnFailure: Bool = false) async {
+        let currentRequestID = UUID()
+        requestID = currentRequestID
         let trimmed = rawQuery.trimmingCharacters(in: .whitespacesAndNewlines)
         query = trimmed
 
@@ -36,12 +45,14 @@ final class SearchService {
 
         isSearching = true
         errorMessage = nil
-        defer { isSearching = false }
+        defer {
+            if requestID == currentRequestID { isSearching = false }
+        }
 
         do {
             let results = try await fetchSearchResults(for: trimmed)
             // Ignore stale responses if the query changed while in flight.
-            guard query == trimmed else { return }
+            guard !Task.isCancelled, requestID == currentRequestID, query == trimmed else { return }
             channelResults = results.channels
             categoryResults = results.categories
             prewarmStaticArtwork(channels: results.channels, categories: results.categories)
@@ -49,9 +60,11 @@ final class SearchService {
                 errorMessage = "No results for \"\(trimmed)\"."
             }
         } catch {
-            guard query == trimmed else { return }
-            channelResults = []
-            categoryResults = []
+            guard !Task.isCancelled, requestID == currentRequestID, query == trimmed else { return }
+            if !preservingResultsOnFailure {
+                channelResults = []
+                categoryResults = []
+            }
             errorMessage = "Could not search right now."
         }
     }
@@ -209,7 +222,7 @@ final class SearchService {
         req.httpBody = try JSONSerialization.data(
             withJSONObject: TwitchAPIClient.graphQLBody(query: query, variables: variables))
 
-        let (data, response) = try await NetworkClient.api.data(for: req)
+        let (data, response) = try await loadData(req)
         return try TwitchAPIClient.validatedData(data, response)
     }
 }

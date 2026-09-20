@@ -14,6 +14,7 @@ import SwiftUI
 ///   name and login.
 struct FollowingDirectoryView: View {
   @Environment(AppEnvironment.self) private var environment
+  @Environment(PlaybackReturnRefreshCoordinator.self) private var playbackReturnRefresh
   private var follows: FollowedChannelsService { environment.follows }
   private var auth: TwitchAuthSession { environment.auth }
   @Binding var selectedChannel: FollowedChannel?
@@ -47,10 +48,17 @@ struct FollowingDirectoryView: View {
   /// Routes a selected channel: offline channels go to their channel page (no
   /// playback to attempt); live channels open the player.
   private func select(_ channel: FollowedChannel) {
+    preparePlaybackReturn()
     if channel.isLive {
       selectedChannel = channel
     } else {
       channelPageTarget = ChannelPageTarget(channel: channel)
+    }
+  }
+
+  private func preparePlaybackReturn() {
+    playbackReturnRefresh.prepareOrigin {
+      await follows.loadDirectory(using: auth, force: true)
     }
   }
 
@@ -96,18 +104,24 @@ struct FollowingDirectoryView: View {
             .padding(.top, 8)
         } else {
           LazyVGrid(columns: columns, spacing: gridSpacing) {
-            ForEach(filteredChannels) { channel in
-              let isFocused = focusedID == channel.id
+            ForEach(filteredChannels, id: \.channelKey) { channel in
+              let isFocused = focusedID == channel.channelKey
               StreamChannelCard(
                 channel: channel,
                 isFocused: isFocused,
                 showsGameName: true,
-                onWatch: { selectedChannel = $0 },
-                onGoToChannel: { channelPageTarget = ChannelPageTarget(channel: $0) }
+                onWatch: {
+                  preparePlaybackReturn()
+                  selectedChannel = $0
+                },
+                onGoToChannel: {
+                  preparePlaybackReturn()
+                  channelPageTarget = ChannelPageTarget(channel: $0)
+                }
               )
               .contentShape(RoundedRectangle(cornerRadius: CardMetrics.gridCardCornerRadius))
               .focusable(true)
-              .focused($focusedID, equals: channel.id)
+              .focused($focusedID, equals: channel.channelKey)
               .focusEffectDisabled()
               .onTapGesture {
                 select(channel)
@@ -130,11 +144,13 @@ struct FollowingDirectoryView: View {
     .task {
       await follows.loadDirectory(using: auth)
     }
-    .onChange(of: follows.directory) { _, channels in
-      if focusedID == nil, let first = channels.first {
+    .onChange(of: follows.directory) { previous, _ in
+      if previous.isEmpty, focusedID == nil, let first = filteredChannels.first {
         Task {
           try? await Task.sleep(for: .milliseconds(150))
-          await MainActor.run { focusedID = first.id }
+          guard !Task.isCancelled, selectedChannel == nil, channelPageTarget == nil, focusedID == nil,
+            filteredChannels.contains(where: { $0.channelKey == first.channelKey }) else { return }
+          focusedID = first.channelKey
         }
       }
     }

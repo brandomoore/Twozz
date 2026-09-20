@@ -40,6 +40,7 @@ struct SearchView: View {
 // MARK: - Results
 
 private struct SearchResultsView: View {
+  @Environment(PlaybackReturnRefreshCoordinator.self) private var playbackReturnRefresh
   @Binding var query: String
   let service: SearchService
   let onSelectChannel: (FollowedChannel) -> Void
@@ -55,6 +56,12 @@ private struct SearchResultsView: View {
     GridItem(.adaptive(minimum: 200, maximum: 260), spacing: 28)
   ]
 
+  private func preparePlaybackReturn() {
+    playbackReturnRefresh.prepareOrigin {
+      await service.search(query, preservingResultsOnFailure: true)
+    }
+  }
+
   var body: some View {
     ScrollView(.vertical, showsIndicators: false) {
       VStack(alignment: .leading, spacing: 32) {
@@ -67,7 +74,7 @@ private struct SearchResultsView: View {
           .padding(.top, 12)
         }
 
-        if let err = service.errorMessage, !service.hasResults {
+        if let err = service.errorMessage {
           Text(err)
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -124,21 +131,30 @@ private struct SearchResultsView: View {
         .accessibilityAddTraits(.isHeader)
 
       LazyVGrid(columns: channelColumns, spacing: 24) {
-        ForEach(service.channelResults) { channel in
-          let id = "channel-\(channel.id)"
+        ForEach(service.channelResults, id: \.channelKey) { channel in
+          let id = "channel-\(channel.channelKey)"
           let isFocused = focusedID == id
           StreamChannelCard(
             channel: channel,
             isFocused: isFocused,
             showsGameName: true,
-            onWatch: channel.isLive ? { onWatchChannel($0) } : nil,
-            onGoToChannel: { onSelectChannel($0) }
+            onWatch: channel.isLive ? {
+              preparePlaybackReturn()
+              onWatchChannel($0)
+            } : nil,
+            onGoToChannel: {
+              preparePlaybackReturn()
+              onSelectChannel($0)
+            }
           )
           .contentShape(RoundedRectangle(cornerRadius: CardMetrics.gridCardCornerRadius))
           .focusable(true)
           .focused($focusedID, equals: id)
           .focusEffectDisabled()
-          .onTapGesture { onSelectChannel(channel) }
+          .onTapGesture {
+            preparePlaybackReturn()
+            onSelectChannel(channel)
+          }
           .zIndex(isFocused ? 2 : 0)
         }
       }

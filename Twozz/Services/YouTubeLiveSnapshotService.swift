@@ -66,9 +66,9 @@ final class YouTubeLiveSnapshotService {
   /// Conditionally refreshes from the remote (throttled, ETag-aware). Falls back
   /// silently to whatever is already loaded on any failure — presence must never
   /// block the Following rail.
-  func refreshIfNeeded() async {
+  func refreshIfNeeded(force: Bool = false) async {
     let defaults = UserDefaults.standard
-    if let last = defaults.object(forKey: Self.lastFetchDefaultsKey) as? Date,
+    if !force, let last = defaults.object(forKey: Self.lastFetchDefaultsKey) as? Date,
       Date().timeIntervalSince(last) < Self.minFetchInterval {
       return
     }

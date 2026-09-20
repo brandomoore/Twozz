@@ -80,6 +80,7 @@ struct HomeView: View {
   /// Serializes the rail refresh chain across all of its entry points. Also a
   /// reference so tracking the in-flight chain never invalidates the view.
   @State private var homeRefresh = HomeRefreshCoordinator()
+  @State private var playbackReturnRefresh = PlaybackReturnRefreshCoordinator()
   /// Mirrors `scenePhase` into `@State` so the long-lived idle watchdog reads a
   /// current value: its captured view copy can hold a stale `@Environment`.
   @State private var isForeground = true
@@ -275,6 +276,7 @@ struct HomeView: View {
       }
     }
     .tabViewStyle(.automatic)
+    .environment(playbackReturnRefresh)
     .background(AppBackground(palette: resolvedPalette))
     .environment(\.themePalette, resolvedPalette)
     .preferredColorScheme(themeManager.theme.preferredColorScheme)
@@ -377,6 +379,9 @@ struct HomeView: View {
       // channel page, deep links) — record it for on-device personalization.
       if let channel { watchHistory.record(channel) }
     }
+    .onChange(of: isPresentingPlayer) { _, isPlaying in
+      if isPlaying { playbackReturnRefresh.cancelRefresh() }
+    }
     .onChange(of: personalizedEnabled) { _, _ in
       Task { await refreshPersonalizedIfNeeded(force: true) }
     }
@@ -386,11 +391,12 @@ struct HomeView: View {
         await refreshPersonalizedIfNeeded(force: true)
       }
     }
-    .fullScreenCover(item: $selectedChannel, onDismiss: { promptGoLiveSetupIfNeeded() }) { channel in
+    .fullScreenCover(item: $selectedChannel, onDismiss: { handlePlayerDismissal() }) { channel in
       PlayerView(channel: channel.login, auth: auth, goLive: goLive, posterURL: channel.thumbnailURL)
         .environment(\.themePalette, resolvedPalette)
     }
     .fullScreenCover(item: $channelPageTarget, onDismiss: {
+      if pendingWatchChannel == nil { playbackReturnRefresh.discardOrigin() }
       presentPendingWatchIfNeeded()
       promptGoLiveSetupIfNeeded()
     }) { target in
@@ -404,7 +410,7 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(item: $multiviewLaunch, onDismiss: { promptGoLiveSetupIfNeeded() }) { launch in
+    .fullScreenCover(item: $multiviewLaunch, onDismiss: { handlePlayerDismissal() }) { launch in
       MultiviewPlayerView(
         channels: launch.channels,
         availableChannels: multiviewAvailablePool,
@@ -435,7 +441,7 @@ struct HomeView: View {
       .environment(\.themePalette, resolvedPalette)
       .preferredColorScheme(themeManager.theme.preferredColorScheme)
     }
-    .fullScreenCover(item: $youtubePlayback, onDismiss: { promptGoLiveSetupIfNeeded() }) { target in
+    .fullScreenCover(item: $youtubePlayback, onDismiss: { handlePlayerDismissal() }) { target in
       YouTubeLivePlayerView(videoID: target.videoID, title: target.title)
         .environment(\.themePalette, resolvedPalette)
         .preferredColorScheme(themeManager.theme.preferredColorScheme)
@@ -669,9 +675,18 @@ struct HomeView: View {
     Task {
       try? await Task.sleep(for: .milliseconds(150))
       await MainActor.run {
-        focusedItemID = "following-\(first.id)"
+        focusedItemID = "following-\(first.channelKey)"
       }
     }
+  }
+
+  private func handlePlayerDismissal() {
+    playbackReturnRefresh.playerDidDismiss {
+      await refreshHomeSections(force: true)
+      guard !Task.isCancelled else { return }
+      await refreshYouTubeSubscriptionLiveness(force: true)
+    }
+    promptGoLiveSetupIfNeeded()
   }
 
   /// Force-refreshes every Home rail and surfaces a brief toast so the viewer
@@ -692,12 +707,15 @@ struct HomeView: View {
     }
   }
 
+  private var isPresentingPlayer: Bool {
+    selectedChannel != nil || multiviewLaunch != nil || youtubePlayback != nil
+  }
+
   /// True while any full-screen cover is up (player, channel page, multiview,
   /// sign-in). The idle watchdog stays out of the way while one is presented,
   /// and dismissing one counts as an interaction.
   private var isPresentingCover: Bool {
-    selectedChannel != nil || channelPageTarget != nil || multiviewLaunch != nil
-      || youtubePlayback != nil || showSignIn || showYouTubeSignIn
+    isPresentingPlayer || channelPageTarget != nil || showSignIn || showYouTubeSignIn
       || showGoLiveSetup
   }
 
@@ -752,9 +770,9 @@ struct HomeView: View {
     return Date().timeIntervalSince(interactionClock.lastInteractionAt) >= idleAutoRefreshDelay
   }
 
-  /// Refreshes every Home rail, one chain at a time. Four paths can now start a
-  /// refresh — initial load, tab return, foreground, idle watchdog — plus the
-  /// header Refresh button, so overlap is genuinely reachable and each kind is
+  /// Refreshes every Home rail, one chain at a time. Initial load, tab/player
+  /// return, foreground, idle watchdog and the header Refresh button can all
+  /// start a refresh, so overlap is genuinely reachable and each kind is
   /// harmful: a second unforced chain would skip the in-flight follows fetch (on
   /// its `isLoading` guard) and then build personalized recommendations from the
   /// *old* follows, while a forced manual refresh bypasses those guards entirely
@@ -791,17 +809,17 @@ struct HomeView: View {
   private func refreshFollowedChannelsIfNeeded(force: Bool) async {
     guard force || shouldAutoRefreshFollowedChannels() else { return }
     await follows.refresh(using: auth)
-    await refreshYouTubePresence()
+    await refreshYouTubePresence(force: force)
     publishTopShelfSnapshot()
   }
 
   /// Pulls the latest Twitch→YouTube alias table and live snapshot (both public,
   /// parameter-free downloads) and merges any live YouTube presence into the
   /// followed channels so dual-platform streamers render as one combined card.
-  private func refreshYouTubePresence() async {
+  private func refreshYouTubePresence(force: Bool = false) async {
     await youtubeAliases.refreshIfNeeded()
-    await youtubeLive.refreshIfNeeded()
-    await enrichYouTubeViewerCounts()
+    await youtubeLive.refreshIfNeeded(force: force)
+    await enrichYouTubeViewerCounts(force: force)
     follows.applyYouTubePresence(aliases: youtubeAliases, live: youtubeLive)
   }
 
@@ -811,7 +829,7 @@ struct HomeView: View {
   /// bounded/throttled by `YouTubeConcurrentViewersService`, then merges the
   /// counts back into the shared snapshot so both the Home cards and the player
   /// show the YouTube viewers in the combined total.
-  private func enrichYouTubeViewerCounts() async {
+  private func enrichYouTubeViewerCounts(force: Bool = false) async {
     let liveVideos = youtubeLive.presences.values
       .filter { $0.isLive }
       .compactMap { presence -> (channelID: String, videoID: String)? in
@@ -820,7 +838,7 @@ struct HomeView: View {
       }
     guard !liveVideos.isEmpty else { return }
 
-    await youtubeConcurrentViewers.refresh(videoIDs: liveVideos.map(\.videoID))
+    await youtubeConcurrentViewers.refresh(videoIDs: liveVideos.map(\.videoID), force: force)
 
     var countsByChannelID: [String: Int] = [:]
     for entry in liveVideos {

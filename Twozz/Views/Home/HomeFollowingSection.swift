@@ -60,10 +60,10 @@ struct HomeFollowingSection: View {
       }
 
       HomeRailScrollView(rail: rail, style: style) {
-        ForEach(channels) { channel in
+        ForEach(channels, id: \.channelKey) { channel in
           HomeRailStreamCard(
             channel: channel,
-            itemID: "following-\(channel.id)",
+            itemID: "following-\(channel.channelKey)",
             layout: style.cardLayout(for: rail),
             onWatch: onWatch,
             onGoToChannel: onGoToChannel,

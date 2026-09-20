@@ -32,10 +32,10 @@ struct HomeTopStreamsSection: View {
         }
 
         HomeRailScrollView(rail: rail, style: style) {
-          ForEach(channels) { channel in
+          ForEach(channels, id: \.channelKey) { channel in
             HomeRailStreamCard(
               channel: channel,
-              itemID: "topstreams-\(channel.id)",
+              itemID: "topstreams-\(channel.channelKey)",
               layout: style.cardLayout(for: rail),
               onWatch: onWatch,
               onGoToChannel: onGoToChannel,
