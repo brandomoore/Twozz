@@ -6,7 +6,7 @@ import UIKit
 extension PlayerView {
   // MARK: - Loading
 
-  func loadInitialSource(reason: String = "initial", resetMetadata: Bool = true) async {
+  func loadInitialSource(reason: String = "initial") async {
     let login = activeChannel
     let sessionID = model.playbackTelemetry.sessionID
     let generation = model.altRecovery.generation
@@ -39,7 +39,7 @@ extension PlayerView {
     }
     guard !Task.isCancelled else { return }
     recordPlaybackEvent("initial_source_selected", attributes: ["source": "twitch"])
-    await load(reason: reason, resetMetadata: resetMetadata)
+    await load(reason: reason)
   }
 
   enum LoadTimeoutError: LocalizedError {
@@ -56,7 +56,7 @@ extension PlayerView {
     }
   }
 
-  func load(maxAttempts: Int = 3, reason: String = "initial", resetMetadata: Bool = true)
+  func load(maxAttempts: Int = 3, reason: String = "initial")
     async
   {
     guard !Task.isCancelled else { return }
@@ -80,15 +80,9 @@ extension PlayerView {
     recordPlaybackEvent(
       "load_started",
       attributes: ["reason": reason],
-      counters: ["max_attempts": maxAttempts],
-      flags: ["reset_metadata": resetMetadata]
+      counters: ["max_attempts": maxAttempts]
     )
-    isLoading = true
-    errorMessage = nil
-    isOffline = false
-    if resetMetadata {
-      streamTitle = ""
-    }
+    model.beginPlaybackLoad()
     player.appliesMediaSelectionCriteriaAutomatically = true
 
     var lastError: Error?
@@ -1015,7 +1009,7 @@ extension PlayerView {
     // counting the discontinuity as a playhead jump.
     diagLastPlayheadSeconds = nil
     diagLastSampleAt = nil
-    await load(maxAttempts: 2, reason: reason, resetMetadata: false)
+    await load(maxAttempts: 2, reason: reason)
   }
 
   // MARK: - Offline empty state
@@ -1059,7 +1053,7 @@ extension PlayerView {
     isOffline = false
     Task {
       async let metadataTask: Void = refreshChannelMetadata()
-      await load(reason: "offline retry", resetMetadata: false)
+      await load(reason: "offline retry")
       _ = await metadataTask
       if !isOffline, errorMessage == nil {
         focus = .video
@@ -1327,8 +1321,14 @@ extension PlayerView {
   }
 
   func refreshChannelMetadata() async {
-    guard let metadata = await PlaybackService.channelMetadata(for: activeChannel) else {
-      channelDisplayName = activeChannel
+    let login = activeChannel
+    let sessionID = model.playbackTelemetry.sessionID
+    let metadata = await PlaybackService.channelMetadata(for: login)
+    guard !Task.isCancelled, login == activeChannel,
+      sessionID == model.playbackTelemetry.sessionID else { return }
+    guard let metadata else {
+      recordPlaybackEvent("channel_metadata_unavailable", level: .warning)
+      channelDisplayName = login
       channelAvatarURL = nil
       return
     }

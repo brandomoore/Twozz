@@ -178,7 +178,7 @@ extension PlayerView {
     chat.connect(to: activeChannel)
     eventSub.start(forChannel: activeChannel, auth: auth)
     hermes.start(forChannel: activeChannel)
-    await load(reason: reason, resetMetadata: false)
+    await load(reason: reason)
     syncCaptions()
   }
 

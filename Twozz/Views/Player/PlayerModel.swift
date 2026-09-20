@@ -90,6 +90,14 @@ final class PlayerModel {
   var isOffline = false
   var isLoading = true
 
+  /// Item/source reloads do not change channels. Keep resolved metadata,
+  /// including metadata that arrived while preferred-source selection waited.
+  func beginPlaybackLoad() {
+    isLoading = true
+    errorMessage = nil
+    isOffline = false
+  }
+
   /// Presentation follows native playback immediately; rate/stability controls
   /// still wait for sustained clock progress in `startupProgress`.
   @discardableResult

@@ -151,9 +151,7 @@ extension PlayerView {
     model.altRecovery.beginItem()
     altYouTubeMasterURL = master
     replacePlaybackItem(with: makeAltSourceItem(url: master))
-    isLoading = true
-    isOffline = false
-    errorMessage = nil
+    model.beginPlaybackLoad()
     altSourceStatus = "Buffering YouTube simulcast…"
     // Resolution can finish after the user pauses, scrubs, or backgrounds.
     if shouldPlayAltSource { startPlayback() }

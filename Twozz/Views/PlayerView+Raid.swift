@@ -130,7 +130,7 @@ extension PlayerView {
     chat.connect(to: login)
     Task {
       async let metadataTask: Void = refreshChannelMetadata()
-      await loadInitialSource(reason: "raid follow", resetMetadata: false)
+      await loadInitialSource(reason: "raid follow")
       _ = await metadataTask
       focus = .video
     }

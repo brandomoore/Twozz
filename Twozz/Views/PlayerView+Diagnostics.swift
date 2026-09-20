@@ -159,7 +159,7 @@ extension PlayerView {
     // behind the unstable edge and fills the deep buffer — no manual seek needed.
     if lowLatencyProxyEnabled {
       if showLatencyDiagnostics { logDiagnosticsEvent("stability: LL prefetch OFF") }
-      Task { await load(reason: "stabilityProxyOff", resetMetadata: false) }
+      Task { await load(reason: "stabilityProxyOff") }
       return
     }
 

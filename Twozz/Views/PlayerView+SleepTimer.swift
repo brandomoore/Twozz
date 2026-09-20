@@ -130,7 +130,7 @@ extension PlayerView {
       if isUsingAltSource {
         await switchToAltYouTubeSource()
       } else {
-        await load(maxAttempts: 2, reason: "wake from sleep", resetMetadata: false)
+        await load(maxAttempts: 2, reason: "wake from sleep")
       }
     }
   }

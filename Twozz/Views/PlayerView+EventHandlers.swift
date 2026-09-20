@@ -559,7 +559,7 @@ extension PlayerView {
       }
       // Rebuild the asset pipeline so the proxy is attached/detached cleanly.
       configurePlayerForLive()
-      Task { await load(reason: "lowLatencyToggle", resetMetadata: false) }
+      Task { await load(reason: "lowLatencyToggle") }
     }
     .onChange(of: streamRewindEnabled) { _, _ in
       guard !isVOD else { return }
@@ -568,7 +568,7 @@ extension PlayerView {
       // rebuild the pipeline from a clean DVR state.
       lowLatencyProxy.resetDVR()
       configurePlayerForLive()
-      Task { await load(reason: "rewindToggle", resetMetadata: false) }
+      Task { await load(reason: "rewindToggle") }
     }
   }
 
