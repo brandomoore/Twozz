@@ -150,7 +150,18 @@ final class LivePlaybackStartupTests: XCTestCase {
   }
 
   func testYouTubeUsesStableForwardBufferPreference() {
-    XCTAssertEqual(LivePlaybackStartup.youtubeForwardBufferSeconds, 8)
+    let item = YouTubePlaybackPolicy.makeItem(url: URL(string: "https://example.com/live.m3u8")!)
+    XCTAssertEqual(item.preferredForwardBufferDuration, 8)
+    XCTAssertEqual(item.configuredTimeOffsetFromLive.seconds, 6)
+    XCTAssertFalse(item.automaticallyPreservesTimeOffsetFromLive)
+  }
+
+  func testYouTubeAddsOnlyTwoSecondsOfMarginAfterRecovery() {
+    let item = YouTubePlaybackPolicy.makeItem(
+      url: URL(string: "https://example.com/live.m3u8")!, isRecovery: true)
+    XCTAssertEqual(item.preferredForwardBufferDuration, 8)
+    XCTAssertEqual(item.configuredTimeOffsetFromLive.seconds, 8)
+    XCTAssertFalse(item.automaticallyPreservesTimeOffsetFromLive)
   }
 
   func testStartupSourceIsResolvedOnceAndReturnedForDirectInstallation() async throws {

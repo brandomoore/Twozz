@@ -21,10 +21,8 @@ extension PlayerView {
   /// and playback stalls on a black frame even though the manifest resolved.
   func makeAltSourceItem(url: URL) -> AVPlayerItem {
     currentSourceURL = url
-    let asset = AVURLAsset(
-      url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": Self.altSourceHTTPHeaders])
-    let item = AVPlayerItem(asset: asset)
-    item.preferredForwardBufferDuration = LivePlaybackStartup.youtubeForwardBufferSeconds
+    let item = YouTubePlaybackPolicy.makeItem(
+      url: url, isRecovery: model.altRecovery.retryCount > 0)
     item.audioTimePitchAlgorithm = .timeDomain
     item.canUseNetworkResourcesForLiveStreamingWhilePaused = true
     // Frame tap so the diagnostics readout can prove real decoded video is
@@ -349,7 +347,10 @@ extension PlayerView {
       shouldPlay: shouldPlayAltSource && !altResolveInFlight,
       now: ProcessInfo.processInfo.systemUptime
     ) {
-      recoverAltSourceIfNeeded(reason: "terminal_error_or_no_progress")
+      let repeatedStalls = model.altRecovery.hasRepeatedStalls(
+        now: ProcessInfo.processInfo.systemUptime)
+      recoverAltSourceIfNeeded(
+        reason: repeatedStalls ? "repeated_buffering" : "terminal_error_or_no_progress")
     }
     guard isUsingAltSource else { return }
     guard let item = player.currentItem else {

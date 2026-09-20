@@ -164,6 +164,12 @@ immediate first frame. With **Prefer YouTube** enabled, Twozz gives source
 selection up to four seconds before falling back to Twitch; it does not start
 Twitch and then automatically interrupt it with a YouTube switch. YouTube uses
 an eight-second forward-buffer preference to help absorb short delivery gaps.
+Because a buffer preference cannot fetch video that has not aired yet, native
+YouTube playback targets a six-second margin behind its available live edge. It does not
+automatically seek away the extra headroom gained during a buffering wait. For
+simulcasts, three stalls within thirty seconds trigger the existing single fresh
+retry, with only two extra seconds of live-edge margin; persistent trouble then
+falls back to Twitch instead of repeatedly reloading or adding more delay.
 This can add initial loading time in exchange for smoother playback; it cannot
 eliminate upstream or network interruptions.
 The loading screen clears when AVPlayer starts playing, independently of the

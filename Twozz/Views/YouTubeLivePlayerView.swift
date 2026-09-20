@@ -59,10 +59,7 @@ struct YouTubeLivePlayerView: View {
     do {
       let url = try await YouTubeStreamResolver.hlsManifestURL(forVideoID: videoID)
       guard !Task.isCancelled else { return }
-      let asset = AVURLAsset(
-        url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": AltSourceService.mediaHTTPHeaders])
-      let item = AVPlayerItem(asset: asset)
-      item.preferredForwardBufferDuration = LivePlaybackStartup.youtubeForwardBufferSeconds
+      let item = YouTubePlaybackPolicy.makeItem(url: url)
       let player = AVPlayer(playerItem: item)
       player.allowsExternalPlayback = true
       self.player = player

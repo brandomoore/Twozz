@@ -1,8 +1,6 @@
 import Foundation
 
 enum LivePlaybackStartup {
-  static let youtubeForwardBufferSeconds: TimeInterval = 8
-
   struct YouTubeSource: Sendable {
     let target: String
     let live: AltSourceService.YouTubeLive

@@ -414,8 +414,13 @@ extension PlayerView {
     )
     scrubTargetSeconds = nil
     pinnedToLive = true
-    replacePlaybackItem(with: makeItem(url: source))
-    applyQualityPreference(preferredQuality)
+    if isUsingAltSource {
+      model.altRecovery.beginItem()
+      replacePlaybackItem(with: makeAltSourceItem(url: source))
+    } else {
+      replacePlaybackItem(with: makeItem(url: source))
+      applyQualityPreference(preferredQuality)
+    }
     if !isUserPaused { startPlayback() }
     updateRewindReadout()
   }

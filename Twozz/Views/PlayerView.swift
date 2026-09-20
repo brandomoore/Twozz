@@ -447,7 +447,11 @@ struct PlayerView: View {
   // from starving buffers or chasing the edge, both of which caused freezes and
   // blur on-device. Per-mode buffer/ABR behavior lives in LivePlaybackPolicy;
   // this is the shared target gap used by live-edge follow + drift recovery.
-  let targetLiveEdgeSeconds: Double = 3.5
+  var targetLiveEdgeSeconds: Double {
+    // YouTube's native seekable end already reflects configuredTimeOffsetFromLive.
+    // Subtracting that offset again would unnecessarily double the DVR margin.
+    isUsingAltSource ? 0 : 3.5
+  }
   let edgeLatencyUnavailableEpsilonSeconds: Double = 0.2
   let edgeLatencyUnavailableSamples = 4
   let wallClockUnavailableSamples = 4

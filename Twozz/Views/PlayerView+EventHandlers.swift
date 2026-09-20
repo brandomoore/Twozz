@@ -190,6 +190,9 @@ extension PlayerView {
       guard now.timeIntervalSince(lastStallNotificationAt) >= stallNotificationDebounceSeconds
       else { return }
       lastStallNotificationAt = now
+      if isUsingAltSource {
+        model.altRecovery.notePlaybackStall(now: ProcessInfo.processInfo.systemUptime)
+      }
       if model.startupProgress.hasStarted {
         markDiagnosticsStall(reason: "AVPlayerItemPlaybackStalled")
       }

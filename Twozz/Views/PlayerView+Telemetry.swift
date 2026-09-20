@@ -89,6 +89,13 @@ extension PlayerView {
     snapshot.metrics["player_rate"] = Double(player.rate)
     snapshot.metrics["preferred_forward_buffer_seconds"] =
       player.currentItem?.preferredForwardBufferDuration ?? 0
+    if let item = player.currentItem {
+      let offset = item.configuredTimeOffsetFromLive.seconds
+      if offset.isFinite { snapshot.metrics["configured_live_offset_seconds"] = offset }
+      let recommended = item.recommendedTimeOffsetFromLive.seconds
+      if recommended.isFinite { snapshot.metrics["recommended_live_offset_seconds"] = recommended }
+      snapshot.flags["automatically_preserves_live_offset"] = item.automaticallyPreservesTimeOffsetFromLive
+    }
     if isVOD {
       snapshot.metrics["desired_vod_rate"] = Double(vodPlaybackRate)
     } else if !isUsingAltSource {
@@ -147,7 +154,7 @@ extension PlayerView {
         snapshot.metrics["seekable_start_seconds"] = window.start
         snapshot.metrics["seekable_end_seconds"] = window.end
         snapshot.metrics["seekable_duration_seconds"] = window.end - window.start
-        if !isVOD, !isUsingAltSource {
+        if !isVOD {
           snapshot.metrics["live_edge_gap_seconds"] = max(window.end - window.now, 0)
         }
       }
