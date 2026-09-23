@@ -195,7 +195,10 @@ including its normal buffering margin, not zero broadcast/network latency.
 
 Chat's timed read pause releases its frozen snapshot when the countdown ends;
 collapsing chat or changing channels also resets scrolling state. The live list
-follows a permanent bottom anchor as its bounded message buffer rotates.
+follows a permanent bottom anchor as its bounded message buffer rotates. While
+following live, it fully lays out a viewport-sized tail rather than relying on
+lazy row-height estimates that can leave a blank panel after emotes resize.
+Pausing or scrolling still exposes the full retained history.
 Twitch chat checks the join handshake and sends a heartbeat every thirty seconds
 after joining. A missing join acknowledgement, failed send, missing heartbeat
 reply, or server reconnect request enters the existing backoff/rejoin loop

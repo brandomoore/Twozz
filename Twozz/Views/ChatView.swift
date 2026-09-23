@@ -135,7 +135,9 @@ struct ChatView: View {
   }
 
   var body: some View {
-    messageList
+    GeometryReader { geometry in
+      messageList(viewportHeight: geometry.size.height)
+    }
       .background(
         isSideLayout
           ? AnyShapeStyle(palette.chatSideSurface)
@@ -150,15 +152,22 @@ struct ChatView: View {
               : AnyShapeStyle(palette.chatSideSurface))))
   }
 
-  private var messageList: some View {
+  private func messageList(viewportHeight: CGFloat) -> some View {
     ScrollViewReader { proxy in
       ScrollView {
         VStack(spacing: 0) {
-          LazyVStack(alignment: .leading, spacing: messageSpacingValue) {
-            ForEach(messages) { message in
-              line(for: message)
-                .id(message.id)
-                .frame(maxWidth: .infinity, alignment: .leading)
+          Group {
+            if autoScroll {
+              // Lazy row-height estimates can strand the viewport in empty
+              // space when emotes resize. Live needs only a viewport-sized
+              // tail; measure those rows eagerly and retain full scrollback.
+              VStack(alignment: .leading, spacing: messageSpacingValue) {
+                messageRows(messages.suffix(liveMessageLimit(viewportHeight: viewportHeight)))
+              }
+            } else {
+              LazyVStack(alignment: .leading, spacing: messageSpacingValue) {
+                messageRows(messages[...])
+              }
             }
           }
           .padding(.horizontal, horizontalPadding)
@@ -168,18 +177,16 @@ struct ChatView: View {
             .id(ScrollAnchor.liveEdge)
             .accessibilityHidden(true)
         }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { _ in
+          if autoScroll { scrollToLiveEdge(proxy) }
+        }
       }
       .scrollIndicators(.hidden)
       .defaultScrollAnchor(.bottom)
-      // The rolling buffer can replace its entire contents without growing.
-      // Follow a permanent, non-lazy edge rather than a row that may be trimmed.
       .onChange(of: messages.last?.id, initial: true) { _, _ in
         if autoScroll { scrollToLiveEdge(proxy) }
       }
-      .onChange(of: scrollTarget) { _, target in
-        // Manual scroll: jump to the requested message. Discrete swipes animate
-        // for a snappy feel; continuous gesture scrolling sends un-animated
-        // targets so the stream of updates reads as a smooth drag.
+      .onChange(of: scrollTarget, initial: true) { _, target in
         guard !autoScroll, let target, messages.contains(where: { $0.id == target.id }) else { return }
         if target.animated {
           withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
@@ -193,12 +200,14 @@ struct ChatView: View {
         if isOn { scrollToLiveEdge(proxy) }
       }
       .overlay(alignment: .bottom) {
-        if !autoScroll {
-          pausedPill
+        ZStack {
+          if !autoScroll {
+            pausedPill
+          }
         }
+        .animation(.easeInOut(duration: 0.2), value: autoScroll)
+        .animation(.easeInOut(duration: 0.2), value: softPauseRemaining)
       }
-      .animation(.easeInOut(duration: 0.2), value: autoScroll)
-      .animation(.easeInOut(duration: 0.2), value: softPauseRemaining)
       .overlay {
         if messages.isEmpty {
           Text(isConnected ? "Waiting for messages…" : "Connecting to chat…")
@@ -206,6 +215,9 @@ struct ChatView: View {
             .foregroundStyle(.secondary)
         }
       }
+      // Live-tail and full-history offsets use different coordinate spaces.
+      // Reset only on a reading-mode change, never on incoming messages.
+      .id(autoScroll)
       .overlay(alignment: .top) {
         if isReconnecting, !messages.isEmpty {
           Text("Reconnecting Twitch chat…")
@@ -217,6 +229,20 @@ struct ChatView: View {
         }
       }
     }
+  }
+
+  private func messageRows(_ displayed: ArraySlice<ChatMessage>) -> some View {
+    ForEach(displayed) { message in
+      line(for: message)
+        .id(message.id)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+  }
+
+  func liveMessageLimit(viewportHeight: CGFloat) -> Int {
+    // Every row contains at least one username line. Font point size is a
+    // conservative lower bound on its line box; add two rows of overscan.
+    max(1, Int(ceil(viewportHeight / max(textSize, 1))) + 2)
   }
 
   private func scrollToLiveEdge(_ proxy: ScrollViewProxy) {
