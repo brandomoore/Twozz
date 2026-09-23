@@ -132,6 +132,7 @@ final class ChatService {
   /// Messages waiting out their sync delay before being shown (arrival order).
   var syncBuffer: [PendingChatMessage] = []
   var syncDrainTask: Task<Void, Never>?
+  @ObservationIgnored var syncDrainDeadline: Date?
 
   let endpoint = URL(string: "wss://irc-ws.chat.twitch.tv:443")!
 
@@ -285,11 +286,13 @@ final class ChatService {
   func configureChatSync(enabled: Bool, delaySeconds: Double) {
     let clamped = max(0, delaySeconds)
     let shouldHold = enabled && clamped >= chatSyncMinDelaySeconds
+    let shortenedDelay = chatSyncEnabled && clamped < chatSyncDelaySeconds
 
     chatSyncDelaySeconds = clamped
 
     if shouldHold {
       chatSyncEnabled = true
+      if shortenedDelay { shortenPendingSyncDelay() }
     } else if chatSyncEnabled || !syncBuffer.isEmpty {
       chatSyncEnabled = false
       flushSyncBuffer()
@@ -393,6 +396,7 @@ final class ChatService {
     retokenizeCoalesceTask = nil
     syncDrainTask?.cancel()
     syncDrainTask = nil
+    syncDrainDeadline = nil
     syncBuffer.removeAll()
     pendingSyncMessageCount = 0
     syncWarmupStart = nil
@@ -456,6 +460,7 @@ final class ChatService {
   private func handleWillEnterForeground() {
     guard channel != nil, let leftAt = backgroundedAt else { return }
     backgroundedAt = nil
+    restartSyncDrain()
     guard Date().timeIntervalSince(leftAt) >= staleAfterBackgroundSeconds else {
       if let socket = connection.currentTask { startIRCHealthWatchdog(socket: socket) }
       return

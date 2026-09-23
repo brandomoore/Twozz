@@ -204,6 +204,10 @@ after joining. A missing join acknowledgement, failed send, missing heartbeat
 reply, or server reconnect request enters the existing backoff/rejoin loop
 without clearing visible messages. Quiet channels do not trigger recovery just
 because nobody is chatting.
+When playback catches up to live, queued chat is retimed to the shorter video
+delay and its release task wakes for the earliest pending message. Foreground
+return also rechecks pending deadlines, so an old pre-suspension sync delay
+cannot hold newer chat behind a sleeping task.
 
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports
 can be examined after the fact. Logging samples playback state about every two
@@ -211,7 +215,8 @@ seconds and records noteworthy state changes, stalls, access/error-log updates,
 seeks, and recovery actions. It is diagnostic observation only; enabling it does
 not change playback tuning. Samples also include chat connection/read-pause
 flags, message-buffer counts, time since the last IRC frame, and reconnect
-counts/reasons; they do not include chat text or chat participants.
+counts/reasons, current sync delay, and queued release/wake deadlines; they do
+not include chat text or chat participants.
 
 Pull the retained logs from the paired Apple TV and summarize the current or
 most recent session:

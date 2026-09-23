@@ -21,7 +21,9 @@ private func uuidPrecedes(_ a: UUID, _ b: UUID) -> Bool {
 extension ChatService {
   struct PendingChatMessage {
     let message: ChatMessage
-    let releaseAt: Date
+    var releaseAt: Date
+    /// Nil for deliberate backlog trickling, which is independent of video delay.
+    var syncAnchor: Date? = nil
   }
 
   /// Sync delay actually applied right now. Eases from 0 up to the full
@@ -75,7 +77,8 @@ extension ChatService {
     for message in sorted {
       let releaseAt = min(message.timestamp.addingTimeInterval(delay), maxReleaseAt)
       if releaseAt > now {
-        syncBuffer.append(PendingChatMessage(message: message, releaseAt: releaseAt))
+        syncBuffer.append(PendingChatMessage(
+          message: message, releaseAt: releaseAt, syncAnchor: min(message.timestamp, now)))
       } else if message.timestamp < fullPlayhead {
         // Behind the synced playhead: old scrollback, subject to the cap.
         backlog.append(message)
@@ -102,18 +105,40 @@ extension ChatService {
     if !syncBuffer.isEmpty {
       // Keep release order correct even when immediate + delayed messages
       // interleave across enqueue calls.
-      syncBuffer.sort { lhs, rhs in
-        if lhs.releaseAt == rhs.releaseAt {
-          if lhs.message.timestamp == rhs.message.timestamp {
-            return uuidPrecedes(lhs.message.id, rhs.message.id)
-          }
-          return lhs.message.timestamp < rhs.message.timestamp
-        }
-        return lhs.releaseAt < rhs.releaseAt
-      }
+      sortSyncBuffer()
       pendingSyncMessageCount = syncBuffer.count
       startSyncDrainIfNeeded()
     }
+  }
+
+  private func sortSyncBuffer() {
+    syncBuffer.sort { lhs, rhs in
+      if lhs.releaseAt == rhs.releaseAt {
+        if lhs.message.timestamp == rhs.message.timestamp {
+          return uuidPrecedes(lhs.message.id, rhs.message.id)
+        }
+        return lhs.message.timestamp < rhs.message.timestamp
+      }
+      return lhs.releaseAt < rhs.releaseAt
+    }
+  }
+
+  /// Returning to live must release chat against the new video position, not
+  /// deadlines calculated while the suspended/rewound picture was far behind.
+  func shortenPendingSyncDelay() {
+    let delay = effectiveSyncDelay(now: Date())
+    var changed = false
+    for index in syncBuffer.indices {
+      guard let anchor = syncBuffer[index].syncAnchor else { continue }
+      let releaseAt = anchor.addingTimeInterval(delay)
+      if releaseAt < syncBuffer[index].releaseAt {
+        syncBuffer[index].releaseAt = releaseAt
+        changed = true
+      }
+    }
+    guard changed else { return }
+    sortSyncBuffer()
+    startSyncDrainIfNeeded()
   }
 
   /// Surfaces a batch that is releasable right now. Small batches appear
@@ -212,10 +237,22 @@ extension ChatService {
   }
 
   private func startSyncDrainIfNeeded() {
-    guard syncDrainTask == nil else { return }
+    guard let next = syncBuffer.first else { return }
+    if syncDrainTask != nil {
+      guard let deadline = syncDrainDeadline, next.releaseAt < deadline else { return }
+      syncDrainTask?.cancel()
+    }
+    syncDrainDeadline = next.releaseAt
     syncDrainTask = Task { [weak self] in
       await self?.drainSyncBuffer()
     }
+  }
+
+  func restartSyncDrain() {
+    syncDrainTask?.cancel()
+    syncDrainTask = nil
+    syncDrainDeadline = nil
+    startSyncDrainIfNeeded()
   }
 
   /// Releases held messages to the visible buffer as each one's delay elapses,
@@ -223,6 +260,7 @@ extension ChatService {
   private func drainSyncBuffer() async {
     while !Task.isCancelled {
       guard let next = syncBuffer.first else { break }
+      syncDrainDeadline = next.releaseAt
 
       let now = Date()
       if next.releaseAt > now {
@@ -244,7 +282,10 @@ extension ChatService {
       appendVisible(released)
       pendingSyncMessageCount = syncBuffer.count
     }
-    if !Task.isCancelled { syncDrainTask = nil }
+    if !Task.isCancelled {
+      syncDrainTask = nil
+      syncDrainDeadline = nil
+    }
   }
 
   /// Immediately surfaces every held message (used when sync is turned off or
@@ -252,6 +293,7 @@ extension ChatService {
   func flushSyncBuffer() {
     syncDrainTask?.cancel()
     syncDrainTask = nil
+    syncDrainDeadline = nil
     guard !syncBuffer.isEmpty else {
       pendingSyncMessageCount = 0
       return

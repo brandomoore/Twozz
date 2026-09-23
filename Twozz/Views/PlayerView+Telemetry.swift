@@ -127,6 +127,15 @@ extension PlayerView {
     snapshot.counters["chat_messages"] = chat.messages.count
     snapshot.counters["chat_frozen_messages"] = chatFrozenMessages?.count ?? 0
     snapshot.counters["chat_pending_sync"] = chat.pendingSyncMessageCount
+    snapshot.flags["chat_sync_enabled"] = chat.chatSyncEnabled
+    snapshot.flags["chat_sync_drain_active"] = chat.syncDrainTask != nil
+    snapshot.metrics["chat_sync_delay_seconds"] = chat.chatSyncDelaySeconds
+    snapshot.metrics["chat_sync_next_release_seconds"] = chat.syncBuffer.first.map {
+      $0.releaseAt.timeIntervalSinceNow
+    }
+    snapshot.metrics["chat_sync_scheduled_wake_seconds"] = chat.syncDrainDeadline.map {
+      $0.timeIntervalSinceNow
+    }
     snapshot.counters["chat_reconnects"] = chat.ircReconnectCount
     snapshot.attributes["chat_last_recovery"] = chat.ircLastRecoveryReason
     if let lastFrame = chat.ircHealth?.lastFrameAt {

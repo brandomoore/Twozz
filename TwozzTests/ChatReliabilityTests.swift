@@ -176,6 +176,166 @@ final class ChatReliabilityTests: XCTestCase {
     chat.disconnect()
   }
 
+  func testReturningToLiveRetimesQueuedChatWithoutAnotherMessage() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 754)
+    let held = try message("held at suspended video position")
+    chat.enqueue([held])
+    try await Task.sleep(for: .milliseconds(30))
+    XCTAssertTrue(chat.messages.isEmpty)
+
+    chat.configureChatSync(enabled: true, delaySeconds: 0.8)
+    XCTAssertLessThanOrEqual(
+      try XCTUnwrap(chat.syncBuffer.first).releaseAt.timeIntervalSince(held.timestamp), 0.81)
+    try await Task.sleep(for: .seconds(1.1))
+
+    XCTAssertEqual(chat.messages.map(\.id), [held.id])
+    XCTAssertEqual(chat.pendingSyncMessageCount, 0)
+    XCTAssertNil(chat.syncDrainTask)
+  }
+
+  func testEarlierArrivingBacklogWakesDrainSleepingOnLaterMessage() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    let later = try message("future")
+    chat.enqueue([later])
+    try await Task.sleep(for: .milliseconds(30))
+    let backlog = (0..<5).map {
+      ChatMessage(youtubeAuthor: "fixture", text: "past-\($0)", youtubeEmoteURLs: [:],
+                  timestamp: Date().addingTimeInterval(-90 + Double($0)))
+    }
+
+    chat.enqueue(backlog)
+    try await Task.sleep(for: .seconds(1.7))
+
+    XCTAssertEqual(chat.messages.map(\.id), backlog.map(\.id))
+    XCTAssertEqual(chat.syncBuffer.map(\.message.id), [later.id])
+    XCTAssertEqual(chat.pendingSyncMessageCount, 1)
+  }
+
+  func testLaterMessagesDoNotRestartTheScheduledDrain() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    chat.enqueue([try message("first")])
+    let drain = try XCTUnwrap(chat.syncDrainTask)
+    let deadline = try XCTUnwrap(chat.syncDrainDeadline)
+    try await Task.sleep(for: .milliseconds(30))
+    chat.enqueue([try message("second")])
+
+    XCTAssertEqual(chat.syncDrainTask, drain)
+    XCTAssertEqual(chat.syncDrainDeadline, deadline)
+    XCTAssertEqual(chat.pendingSyncMessageCount, 2)
+  }
+
+  func testShortenedDelayCancellationCannotClearTheNewDrain() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 754)
+    chat.enqueue([try message("held")])
+    let oldDrain = try XCTUnwrap(chat.syncDrainTask)
+    try await Task.sleep(for: .milliseconds(30))
+    chat.configureChatSync(enabled: true, delaySeconds: 17)
+    let replacement = try XCTUnwrap(chat.syncDrainTask)
+    let deadline = try XCTUnwrap(chat.syncDrainDeadline)
+
+    await oldDrain.value
+
+    XCTAssertTrue(oldDrain.isCancelled)
+    XCTAssertEqual(chat.syncDrainTask, replacement)
+    XCTAssertEqual(chat.syncDrainDeadline, deadline)
+    XCTAssertLessThan(deadline.timeIntervalSinceNow, 17)
+  }
+
+  func testForegroundRechecksOverdueMessagesWithoutAnotherArrival() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    let held = try message("held")
+    chat.enqueue([held])
+    let oldDrain = try XCTUnwrap(chat.syncDrainTask)
+    try await Task.sleep(for: .milliseconds(30))
+    // Model wall-clock deadlines passing while the sleeping task is suspended.
+    chat.syncBuffer[0].releaseAt = Date().addingTimeInterval(-1)
+    chat.restartSyncDrain()
+    await oldDrain.value
+    try await Task.sleep(for: .milliseconds(100))
+
+    XCTAssertEqual(chat.messages.map(\.id), [held.id])
+    XCTAssertEqual(chat.pendingSyncMessageCount, 0)
+    XCTAssertNil(chat.syncDrainTask)
+    XCTAssertNil(chat.syncDrainDeadline)
+  }
+
+  func testShortenedDelayKeepsFutureTimestampAnchoredToArrival() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 754)
+    let skewed = ChatMessage(
+      youtubeAuthor: "fixture", text: "future clock", youtubeEmoteURLs: [:],
+      timestamp: Date().addingTimeInterval(600))
+    let arrival = Date()
+    chat.enqueue([skewed])
+    chat.configureChatSync(enabled: true, delaySeconds: 17)
+
+    let pending = try XCTUnwrap(chat.syncBuffer.first)
+    XCTAssertLessThan(pending.releaseAt.timeIntervalSince(arrival), 17.1)
+    XCTAssertGreaterThan(pending.releaseAt.timeIntervalSince(arrival), 16.9)
+  }
+
+  func testShortenedDelayHonorsStartupRampAndDoesNotPostponeOldMessages() throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.syncWarmupStart = Date().addingTimeInterval(-15)
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    let held = try message("warming up")
+    chat.enqueue([held])
+    chat.configureChatSync(enabled: true, delaySeconds: 20)
+
+    let pending = try XCTUnwrap(chat.syncBuffer.first)
+    XCTAssertEqual(pending.releaseAt.timeIntervalSince(held.timestamp), 10, accuracy: 0.1)
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    XCTAssertEqual(chat.syncBuffer.first?.releaseAt, pending.releaseAt)
+  }
+
+  func testVideoDelayChangeDoesNotCollapseBacklogTrickle() throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 60)
+    let backlog = (0..<5).map {
+      ChatMessage(youtubeAuthor: "fixture", text: "past-\($0)", youtubeEmoteURLs: [:],
+                  timestamp: Date().addingTimeInterval(-90 + Double($0)))
+    }
+    chat.enqueue(backlog)
+    let deadlines = chat.syncBuffer.map(\.releaseAt)
+
+    chat.configureChatSync(enabled: true, delaySeconds: 17)
+
+    XCTAssertEqual(chat.syncBuffer.map(\.releaseAt), deadlines)
+    XCTAssertEqual(deadlines.last!.timeIntervalSince(deadlines.first!), 1.2, accuracy: 0.001)
+  }
+
+  func testTurningSyncOffFlushesOnceAndClearsWakeDeadline() async throws {
+    let chat = ChatService()
+    defer { chat.disconnect() }
+    chat.configureChatSync(enabled: true, delaySeconds: 754)
+    let held = try message("held")
+    chat.enqueue([held])
+    let oldDrain = try XCTUnwrap(chat.syncDrainTask)
+    try await Task.sleep(for: .milliseconds(30))
+
+    chat.configureChatSync(enabled: false, delaySeconds: 17)
+    await oldDrain.value
+    chat.restartSyncDrain()
+
+    XCTAssertEqual(chat.messages.map(\.id), [held.id])
+    XCTAssertEqual(chat.pendingSyncMessageCount, 0)
+    XCTAssertNil(chat.syncDrainTask)
+    XCTAssertNil(chat.syncDrainDeadline)
+  }
+
   private func message(_ text: String) throws -> ChatMessage {
     try XCTUnwrap(ChatMessage(ircLine: ":viewer!viewer@host PRIVMSG #example :\(text)"))
   }
