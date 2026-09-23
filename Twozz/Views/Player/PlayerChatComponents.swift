@@ -44,7 +44,7 @@ struct ChatMessagesColumn: View {
   let scrollTarget: ChatScrollTarget?
 
   private var visibleMessages: [ChatMessage] {
-    if let frozenMessages { return frozenMessages }
+    if !autoScroll, let frozenMessages { return frozenMessages }
     if let replay { return replay.messages }
     guard let chat else { return [] }
     guard let startID = replayStartMessageID else { return chat.messages }
@@ -81,6 +81,7 @@ struct ChatMessagesColumn: View {
       viewerDisplayName: viewerDisplayName,
       highlightKeywords: highlightKeywords,
       isConnected: isConnected,
+      isReconnecting: chat.map { !$0.isConnected } ?? false,
       emoteURLs: emoteURLs,
       badgeURLs: badgeURLs,
       cheermotes: cheermotes,
@@ -658,4 +659,3 @@ struct ChatSettingsPanelGlassStyle: ViewModifier {
     }
   }
 }
-

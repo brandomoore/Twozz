@@ -233,6 +233,7 @@ final class PlayerModel {
 
   // MARK: Chat scroll / soft-pause / trackpad / hold
   var chatSoftPauseRemaining: Int?
+  @ObservationIgnored var chatSoftPauseDeadline: Date?
   var softPauseTask: Task<Void, Never>?
   var isChatScrolling = false
   var chatScrollAnchorID: ChatMessage.ID?
@@ -268,6 +269,54 @@ final class PlayerModel {
   /// foreground. Drives the live-edge catch-up on return; see
   /// `PlayerView.handleReturnToForeground()`.
   var backgroundedAt: Date?
+
+  func beginChatSoftPause(messages: [ChatMessage], seconds: Int, now: Date = Date()) {
+    cancelChatSoftPause()
+    if chatFrozenMessages == nil { chatFrozenMessages = messages }
+    chatSoftPauseDeadline = now.addingTimeInterval(Double(seconds))
+    chatSoftPauseRemaining = seconds
+  }
+
+  /// Release the snapshot in the same update that removes the pause indicator.
+  @discardableResult
+  func updateChatSoftPause(now: Date = Date()) -> Bool {
+    guard let deadline = chatSoftPauseDeadline else { return false }
+    let remaining = Int(ceil(deadline.timeIntervalSince(now)))
+    guard remaining > 0 else {
+      cancelChatSoftPause()
+      if !isChatScrolling {
+        chatFrozenMessages = nil
+        chatScrollAnchorID = nil
+        chatScrollTarget = nil
+      }
+      return false
+    }
+    chatSoftPauseRemaining = remaining
+    return true
+  }
+
+  func cancelChatSoftPause() {
+    softPauseTask?.cancel()
+    softPauseTask = nil
+    chatSoftPauseDeadline = nil
+    chatSoftPauseRemaining = nil
+  }
+
+  func resetChatReading(preservingScrollMode: Bool = false) {
+    cancelChatSoftPause()
+    trackpadScrollTask?.cancel()
+    trackpadScrollTask = nil
+    chatHoldTask?.cancel()
+    chatHoldTask = nil
+    chatFrozenMessages = nil
+    chatScrollAnchorID = nil
+    chatScrollTarget = nil
+    trackpadScrollIndex = 0
+    lastSentScrollIndex = -1
+    lastGestureScrollAt = .distantPast
+    lastHoldRepeatAt = .distantPast
+    if !preservingScrollMode { isChatScrolling = false }
+  }
 }
 
 extension PlayerView {

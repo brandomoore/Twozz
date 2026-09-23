@@ -120,6 +120,18 @@ extension PlayerView {
     snapshot.flags["using_alt_source"] = isUsingAltSource
     snapshot.flags["low_latency_proxy_enabled"] = lowLatencyProxyEnabled
     snapshot.flags["stream_rewind_enabled"] = streamRewindEnabled
+    snapshot.flags["chat_visible"] = showChat
+    snapshot.flags["chat_connected"] = chat.isConnected
+    snapshot.flags["chat_reading"] = chatIsFrozen
+    snapshot.flags["chat_frozen_snapshot"] = chatFrozenMessages != nil
+    snapshot.counters["chat_messages"] = chat.messages.count
+    snapshot.counters["chat_frozen_messages"] = chatFrozenMessages?.count ?? 0
+    snapshot.counters["chat_pending_sync"] = chat.pendingSyncMessageCount
+    snapshot.counters["chat_reconnects"] = chat.ircReconnectCount
+    snapshot.attributes["chat_last_recovery"] = chat.ircLastRecoveryReason
+    if let lastFrame = chat.ircHealth?.lastFrameAt {
+      snapshot.metrics["chat_frame_age_seconds"] = max(0, ProcessInfo.processInfo.systemUptime - lastFrame)
+    }
 
     snapshot.counters["diagnostic_stalls"] = diagStallCount
     snapshot.counters["diagnostic_jumps"] = diagJumpCount

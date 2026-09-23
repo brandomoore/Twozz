@@ -1,9 +1,68 @@
 import Foundation
+import OSLog
 
 /// IRC-over-WebSocket transport and line parsing for `ChatService`: the receive
 /// loop, command sending, and tokenizing raw IRC frames (PRIVMSG, USERNOTICE,
 /// CAP/JOIN handshake, PING/PONG, raid notices) into `ChatMessage`s.
 extension ChatService {
+  private static let ircLog = Logger(subsystem: "com.thatcube.Twozz", category: "Chat")
+
+  func openIRCConnection() {
+    ircTransportID = UUID()
+    ircFailurePending = false
+    hasSentJoin = false
+    hasCapAck = false
+    isConnected = false
+    ircHealth = ChatConnectionHealth(now: ProcessInfo.processInfo.systemUptime)
+    let socket = connection.connect(to: endpoint)
+    sendIRCHandshake()
+    startIRCHealthWatchdog(socket: socket)
+  }
+
+  func startIRCHealthWatchdog(socket: URLSessionWebSocketTask) {
+    ircHealthTask?.cancel()
+    ircHealthTask = Task { @MainActor [weak self] in
+      while !Task.isCancelled {
+        try? await Task.sleep(for: .seconds(5))
+        guard !Task.isCancelled, let self,
+          self.connection.currentTask === socket, !self.ircFailurePending else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        switch self.ircHealth?.nextAction(now: now) {
+        case .ping:
+          socket.sendPing { [weak self] error in
+            Task { @MainActor in
+              guard let self, self.connection.currentTask === socket,
+                !self.ircFailurePending else { return }
+              if error != nil {
+                self.invalidateIRCConnection(socket: socket, reason: .pingFailed)
+              } else {
+                self.ircHealth?.receivedPong(
+                  sentAt: now, now: ProcessInfo.processInfo.systemUptime)
+              }
+            }
+          }
+        case .reconnect(let reason):
+          self.invalidateIRCConnection(socket: socket, reason: reason)
+          return
+        case .wait, .none:
+          break
+        }
+      }
+    }
+  }
+
+  func invalidateIRCConnection(socket: URLSessionWebSocketTask, reason: ChatConnectionHealth.Failure) {
+    guard connection.currentTask === socket, !ircFailurePending else { return }
+    ircFailurePending = true
+    isConnected = false
+    ircLastRecoveryReason = reason.rawValue
+    ircHealthTask?.cancel()
+    ircHealthTask = nil
+    Self.ircLog.warning("Recovering Twitch chat: \(reason.rawValue, privacy: .public)")
+    // Cancelling unblocks receive(); that loop owns the single backoff/rejoin path.
+    socket.cancel(with: .goingAway, reason: nil)
+  }
+
   /// The anonymous (`justinfan`) login handshake. Sent on every fresh socket —
   /// the first connect, an auto-reconnect after a receive error, and the rebuild
   /// after the app returns from the background.
@@ -20,7 +79,13 @@ extension ChatService {
   }
 
   func send(_ command: String) {
-    connection.send(.string(command + "\r\n"))
+    guard let socket = connection.currentTask, !ircFailurePending else { return }
+    socket.send(.string(command + "\r\n")) { [weak self] error in
+      guard error != nil else { return }
+      Task { @MainActor in
+        self?.invalidateIRCConnection(socket: socket, reason: .sendFailed)
+      }
+    }
   }
 
   func receiveLoop() async {
@@ -28,15 +93,17 @@ extension ChatService {
       guard let currentSocket = connection.currentTask else { break }
       do {
         let frame = try await currentSocket.receive()
-        connection.resetBackoff()
+        guard !Task.isCancelled, connection.currentTask === currentSocket,
+          !ircFailurePending else { continue }
+        ircHealth?.receivedFrame(now: ProcessInfo.processInfo.systemUptime)
         switch frame {
         case .string(let text): await handle(text)
         case .data(let data): await handle(String(decoding: data, as: UTF8.self))
         @unknown default: break
         }
       } catch {
-        guard !Task.isCancelled else { break }
-        isConnected = false
+        guard !Task.isCancelled, connection.currentTask === currentSocket else { break }
+        invalidateIRCConnection(socket: currentSocket, reason: .receiveFailed)
 
         // Reconnect with exponential backoff (3s, 6s, 12s… capped at 30s),
         // preserving the message buffer.
@@ -45,16 +112,17 @@ extension ChatService {
         try? await Task.sleep(for: .seconds(delay))
         guard !Task.isCancelled, channel == channelToRejoin else { break }
 
-        connection.connect(to: endpoint)
-        hasSentJoin = false
-        hasCapAck = false
-        sendIRCHandshake()
+        ircReconnectCount += 1
+        openIRCConnection()
         // Loop continues — next iteration receives on the new socket.
       }
     }
   }
 
   func handle(_ raw: String) async {
+    guard !Task.isCancelled, !ircFailurePending else { return }
+    let session = sessionID
+    let transport = ircTransportID
     // A single frame can batch multiple IRC lines. Control lines (PING/PONG,
     // CAP/JOIN handshake, end-of-NAMES, raids) touch connection state and stay on
     // the main actor — they're cheap and rare. The expensive PRIVMSG/USERNOTICE
@@ -63,20 +131,31 @@ extension ChatService {
     // enqueue the finished batch.
     var messagePieces: [String] = []
     for piece in raw.components(separatedBy: "\r\n") where !piece.isEmpty {
-      if piece.hasPrefix("PING") {
-        send("PONG :tmi.twitch.tv")
+      let fields = Self.ircFields(piece)
+      guard let command = fields.first else { continue }
+      if command == "PING" {
+        send("PONG " + fields.dropFirst().joined(separator: " "))
         continue
       }
-      if piece.contains(" CAP ") && piece.contains(" ACK ") && piece.contains("twitch.tv/tags") {
+      if command == "RECONNECT" {
+        if let socket = connection.currentTask {
+          invalidateIRCConnection(socket: socket, reason: .serverReconnect)
+        }
+        return
+      }
+      if command == "CAP", fields.count > 3, fields[2] == "ACK",
+        fields[3].contains("twitch.tv/tags") {
         hasCapAck = true
         sendJoinIfNeeded()
         continue
       }
-      if piece.contains(" 366 ") {  // end-of-NAMES => join confirmed
+      if command == "366", fields.count > 2, fields[2].lowercased() == "#\(channel ?? "")" {
         isConnected = true
+        ircHealth?.joinedChannel(now: ProcessInfo.processInfo.systemUptime)
+        connection.resetBackoff()
         continue
       }
-      if let raid = parseRaidEvent(from: piece) {
+      if command == "USERNOTICE", let raid = parseRaidEvent(from: piece) {
         pendingRaid = raid
         continue
       }
@@ -85,8 +164,19 @@ extension ChatService {
 
     guard !messagePieces.isEmpty else { return }
     let parsedMessages = await ingestPipeline.parseAndTokenize(messagePieces)
-    guard !parsedMessages.isEmpty else { return }
+    guard !Task.isCancelled, sessionID == session, ircTransportID == transport,
+      !ircFailurePending, !parsedMessages.isEmpty else { return }
     enqueue(parsedMessages)
+  }
+
+  private static func ircFields(_ line: String) -> [Substring] {
+    var rest = Substring(line)
+    for prefix: Character in ["@", ":"] {
+      if rest.first == prefix, let space = rest.firstIndex(of: " ") {
+        rest = rest[rest.index(after: space)...]
+      }
+    }
+    return rest.split(separator: " ", maxSplits: 3, omittingEmptySubsequences: true)
   }
 
   /// Parse a Twitch USERNOTICE line for `msg-id=raid` and return a `RaidEvent`.

@@ -41,8 +41,10 @@ extension ChatService {
   /// JSON without precomputed segments, so their tokenization stays off the
   /// scroll thread like the Twitch IRC path.
   func enqueueTokenized(_ incoming: [ChatMessage]) async {
-    guard !incoming.isEmpty else { return }
+    guard !Task.isCancelled, !incoming.isEmpty else { return }
+    let session = sessionID
     let tokenized = await ingestPipeline.tokenize(incoming)
+    guard !Task.isCancelled, sessionID == session else { return }
     enqueue(tokenized)
   }
 
@@ -162,8 +164,9 @@ extension ChatService {
     }
     appendFlushScheduled = true
     let delay = interval - elapsed
+    let session = sessionID
     DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-      guard let self else { return }
+      guard let self, self.sessionID == session else { return }
       self.appendFlushScheduled = false
       self.flushPendingAppends()
     }
@@ -200,10 +203,12 @@ extension ChatService {
       batch.removeFirst(batch.count - maxMessagesPerFlushUnderLoad)
     }
 
-    messages.append(contentsOf: batch)
-    if messages.count > maxBufferedMessages {
-      messages.removeFirst(messages.count - maxBufferedMessages)
+    var updated = messages
+    updated.append(contentsOf: batch)
+    if updated.count > maxBufferedMessages {
+      updated.removeFirst(updated.count - maxBufferedMessages)
     }
+    messages = updated
   }
 
   private func startSyncDrainIfNeeded() {
@@ -239,7 +244,7 @@ extension ChatService {
       appendVisible(released)
       pendingSyncMessageCount = syncBuffer.count
     }
-    syncDrainTask = nil
+    if !Task.isCancelled { syncDrainTask = nil }
   }
 
   /// Immediately surfaces every held message (used when sync is turned off or

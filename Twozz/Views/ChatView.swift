@@ -35,6 +35,7 @@ struct ChatView: View {
   /// Extra user-defined highlight keywords (already normalized/lowercased).
   var highlightKeywords: [String] = []
   var isConnected: Bool = false
+  var isReconnecting: Bool = false
   var emoteURLs: [String: URL] = [:]
   var badgeURLs: [String: URL] = [:]
   /// Channel + global cheermotes, used to render bits cheers (e.g. `Cheer100`).
@@ -65,6 +66,7 @@ struct ChatView: View {
   /// Drives the swipe-up hint chevron: it fades + drifts up once, slightly after
   /// the pill animates in. Reset to false on disappear so it replays on reopen.
   @State var hintShown = false
+  private enum ScrollAnchor: Hashable { case liveEdge }
 
   /// Side layout is the only non-glass, non-overlay mode; it follows the
   /// app theme so light mode paints a light chat panel with dark text.
@@ -151,32 +153,34 @@ struct ChatView: View {
   private var messageList: some View {
     ScrollViewReader { proxy in
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: messageSpacingValue) {
-          ForEach(messages) { message in
-            line(for: message)
-              .id(message.id)
-              .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(spacing: 0) {
+          LazyVStack(alignment: .leading, spacing: messageSpacingValue) {
+            ForEach(messages) { message in
+              line(for: message)
+                .id(message.id)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
           }
+          .padding(.horizontal, horizontalPadding)
+          .padding(.vertical, verticalPadding)
+          Color.clear
+            .frame(height: 1)
+            .id(ScrollAnchor.liveEdge)
+            .accessibilityHidden(true)
         }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, verticalPadding)
       }
       .scrollIndicators(.hidden)
-      // Pin the list to the bottom natively. Unlike a manual `scrollTo(lastID,
-      // anchor: .bottom)` — which must sum the heights of every row above the
-      // target, including off-screen lazy rows whose heights are only *estimated*
-      // (and fluctuate as the capped buffer trims the front and appends the back),
-      // causing the list to overshoot upward then snap back down — this keeps the
-      // bottom *content edge* glued to the viewport as content grows. It's a
-      // relative pin with no per-item offset math, so live chat stays steady with
-      // no upward re-adjustment, and it also absorbs a row growing taller when its
-      // emotes finish loading.
       .defaultScrollAnchor(.bottom)
+      // The rolling buffer can replace its entire contents without growing.
+      // Follow a permanent, non-lazy edge rather than a row that may be trimmed.
+      .onChange(of: messages.last?.id, initial: true) { _, _ in
+        if autoScroll { scrollToLiveEdge(proxy) }
+      }
       .onChange(of: scrollTarget) { _, target in
         // Manual scroll: jump to the requested message. Discrete swipes animate
         // for a snappy feel; continuous gesture scrolling sends un-animated
         // targets so the stream of updates reads as a smooth drag.
-        guard let target else { return }
+        guard !autoScroll, let target, messages.contains(where: { $0.id == target.id }) else { return }
         if target.animated {
           withAnimation(.spring(response: 0.24, dampingFraction: 0.84)) {
             proxy.scrollTo(target.id, anchor: target.anchor)
@@ -186,13 +190,7 @@ struct ChatView: View {
         }
       }
       .onChange(of: autoScroll) { _, isOn in
-        // Resuming after a pause: snap back to the newest message. (Live pinning
-        // is handled natively by `defaultScrollAnchor(.bottom)`; this is just the
-        // one-shot animated catch-up when the reader rejoins the feed.)
-        guard isOn, let last = messages.last else { return }
-        withAnimation(.easeOut(duration: 0.18)) {
-          proxy.scrollTo(last.id, anchor: .bottom)
-        }
+        if isOn { scrollToLiveEdge(proxy) }
       }
       .overlay(alignment: .bottom) {
         if !autoScroll {
@@ -208,6 +206,24 @@ struct ChatView: View {
             .foregroundStyle(.secondary)
         }
       }
+      .overlay(alignment: .top) {
+        if isReconnecting, !messages.isEmpty {
+          Text("Reconnecting Twitch chat…")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .padding(8)
+            .background(.regularMaterial, in: Capsule())
+            .padding(8)
+        }
+      }
+    }
+  }
+
+  private func scrollToLiveEdge(_ proxy: ScrollViewProxy) {
+    var transaction = Transaction()
+    transaction.disablesAnimations = true
+    withTransaction(transaction) {
+      proxy.scrollTo(ScrollAnchor.liveEdge, anchor: .bottom)
     }
   }
 }

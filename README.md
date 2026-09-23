@@ -187,11 +187,22 @@ than counting time spent in the background as a freeze. An empty buffer or
 expired playlist triggers a live-status check and recovery, not a "stream ended"
 verdict: that message requires Twitch to confirm the channel is offline.
 
+Chat's timed read pause releases its frozen snapshot when the countdown ends;
+collapsing chat or changing channels also resets scrolling state. The live list
+follows a permanent bottom anchor as its bounded message buffer rotates.
+Twitch chat checks the join handshake and sends a heartbeat every thirty seconds
+after joining. A missing join acknowledgement, failed send, missing heartbeat
+reply, or server reconnect request enters the existing backoff/rejoin loop
+without clearing visible messages. Quiet channels do not trigger recovery just
+because nobody is chatting.
+
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports
 can be examined after the fact. Logging samples playback state about every two
 seconds and records noteworthy state changes, stalls, access/error-log updates,
 seeks, and recovery actions. It is diagnostic observation only; enabling it does
-not change playback tuning.
+not change playback tuning. Samples also include chat connection/read-pause
+flags, message-buffer counts, time since the last IRC frame, and reconnect
+counts/reasons; they do not include chat text or chat participants.
 
 Pull the retained logs from the paired Apple TV and summarize the current or
 most recent session:

@@ -4,14 +4,14 @@ import UIKit
 // Chat scrolling, paging, and trackpad/hold scroll loops for the chat pane.
 extension PlayerView {
   func toggleChatVisibility() {
+    chatExitFocusTask?.cancel()
+    model.resetChatReading()
     showChat.toggle()
     if showChat {
       chatReplayStartMessageID = chat.messages.suffix(chatReplayMessageCount).first?.id
     } else {
       chatReplayStartMessageID = nil
       showChatSettings = false
-      cancelSoftPause()
-      chatFrozenMessages = nil
     }
   }
 
@@ -69,18 +69,12 @@ extension PlayerView {
   /// Focus is left untouched — this is a lightweight "let me read" pause.
   func startSoftPause() {
     chatExitFocusTask?.cancel()
-    freezeChatSnapshot()
-    softPauseTask?.cancel()
-    chatSoftPauseRemaining = softPauseSeconds
-    softPauseTask = Task {
-      var remaining = softPauseSeconds
-      while remaining > 0 {
+    model.beginChatSoftPause(messages: liveVisibleChatMessages, seconds: softPauseSeconds)
+    softPauseTask = Task { @MainActor in
+      while !Task.isCancelled {
         try? await Task.sleep(for: .seconds(1))
-        if Task.isCancelled { return }
-        remaining -= 1
-        await MainActor.run {
-          chatSoftPauseRemaining = remaining > 0 ? remaining : nil
-        }
+        guard !Task.isCancelled else { return }
+        guard model.updateChatSoftPause() else { break }
       }
     }
   }
@@ -94,9 +88,7 @@ extension PlayerView {
   }
 
   func cancelSoftPause() {
-    softPauseTask?.cancel()
-    softPauseTask = nil
-    chatSoftPauseRemaining = nil
+    model.cancelChatSoftPause()
   }
 
   /// Promote a soft pause into manual scroll mode, anchored at the newest message.
@@ -104,9 +96,13 @@ extension PlayerView {
     guard !isChatScrolling else { return }
     chatExitFocusTask?.cancel()
     freezeChatSnapshot()
+    let msgs = visibleChatMessages
+    guard !msgs.isEmpty else {
+      resumeChatLive()
+      return
+    }
     cancelSoftPause()
     isChatScrolling = true
-    let msgs = visibleChatMessages
     chatScrollAnchorID = msgs.last?.id
     trackpadScrollIndex = Double(max(0, msgs.count - 1))
     lastSentScrollIndex = msgs.count - 1
@@ -171,7 +167,7 @@ extension PlayerView {
         velocity = velocity * 0.35 + delta * 0.65
         if !applyScrollDelta(delta) { break }
       }
-      trackpadScrollTask = nil
+      if !Task.isCancelled { trackpadScrollTask = nil }
     }
   }
 
@@ -271,7 +267,7 @@ extension PlayerView {
         if !applyScrollDelta(delta) { break }  // reached the live bottom
         velocity = min(chatHoldMaxVelocity, velocity * chatHoldVelocityAccel)
       }
-      chatHoldTask = nil
+      if !Task.isCancelled { chatHoldTask = nil }
     }
   }
 
@@ -342,10 +338,8 @@ extension PlayerView {
   /// composer, and only re-enable the row on the NEXT runloop, by which point
   /// focus has already settled and the buttons reappear underneath it.
   func resumeChatLive(restoreFocus: Bool = false) {
-    cancelSoftPause()
-    chatScrollAnchorID = nil
-    chatFrozenMessages = nil
-    stopTrackpadScrollLoop()
+    chatExitFocusTask?.cancel()
+    model.resetChatReading(preservingScrollMode: restoreFocus && !isVOD)
 
     guard restoreFocus, !isVOD else {
       // VOD (or a non-deliberate resume) has no live composer to hold. Flip
@@ -374,8 +368,8 @@ extension PlayerView {
     // when the row rejoins, the worst case lands one button away from chat rather
     // than flinging all the way to the far-side channel button.
     pendingControlFocus = .chatToggle
-    chatExitFocusTask?.cancel()
     chatExitFocusTask = Task { @MainActor in
+      guard !Task.isCancelled else { return }
       // Render B (next runloop): re-enable the control row now that focus is
       // firmly on the composer.
       isChatScrolling = false

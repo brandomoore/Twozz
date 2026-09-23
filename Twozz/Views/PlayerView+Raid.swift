@@ -97,6 +97,9 @@ extension PlayerView {
   }
 
   func followRaid(_ login: String) {
+    chatExitFocusTask?.cancel()
+    model.resetChatReading()
+    chatReplayStartMessageID = nil
     raidBannerDismissTask?.cancel()
     chat.pendingRaid = nil
     clearOutgoingRaidState()

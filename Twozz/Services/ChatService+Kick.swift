@@ -62,7 +62,9 @@ extension ChatService {
             continue
           }
 
-          guard let info = try await Self.fetchKickChannelInfo(slug: slug) else {
+          let resolved = try await Self.fetchKickChannelInfo(slug: slug)
+          guard !Task.isCancelled else { return }
+          guard let info = resolved else {
             kickStatusMessage = "No Kick channel found for \(slug)."
             try? await Task.sleep(for: .seconds(10))
             continue
@@ -102,6 +104,7 @@ extension ChatService {
 
     while !Task.isCancelled {
       let frame = try await socket.receive()
+      guard !Task.isCancelled, kickConnection.currentTask === socket else { return }
       kickConnection.resetBackoff()
 
       let text: String

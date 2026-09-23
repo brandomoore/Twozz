@@ -44,6 +44,7 @@ extension ChatService {
       do {
         if videoID == nil {
           videoID = await resolveYouTubeVideoID(from: target)
+          guard !Task.isCancelled else { return }
           guard let currentVideoID = videoID else {
             youtubeStatusMessage = "No live YouTube stream found for \(target)."
             try? await Task.sleep(for: .seconds(10))
@@ -62,6 +63,7 @@ extension ChatService {
           }
 
           let bootstrap = try await fetchYouTubeBootstrap(videoID: currentVideoID)
+          guard !Task.isCancelled else { return }
           continuationToken = bootstrap.continuation
           apiKey = bootstrap.apiKey
           clientVersion = bootstrap.clientVersion
@@ -80,6 +82,7 @@ extension ChatService {
           apiKey: currentAPIKey,
           clientVersion: currentClientVersion
         )
+        guard !Task.isCancelled else { return }
 
         continuationToken = pollResult.continuation ?? continuationToken
         let freshMessages = filterAndRememberYouTubeMessages(pollResult.entries)
@@ -99,6 +102,7 @@ extension ChatService {
           // one-by-one rather than all at once.
           let perMs = clampedDelay / UInt64(freshMessages.count)
           for msg in freshMessages {
+            guard !Task.isCancelled else { return }
             await enqueueTokenized([msg])
             try? await Task.sleep(for: .milliseconds(Int(perMs)))
           }

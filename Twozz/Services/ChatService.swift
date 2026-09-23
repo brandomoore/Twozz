@@ -139,6 +139,13 @@ final class ChatService {
   /// and the exponential-backoff counter.
   let connection = WebSocketConnection()
   private var receiveTask: Task<Void, Never>?
+  @ObservationIgnored var sessionID = UUID()
+  @ObservationIgnored var ircTransportID = UUID()
+  @ObservationIgnored var ircHealth: ChatConnectionHealth?
+  @ObservationIgnored var ircHealthTask: Task<Void, Never>?
+  @ObservationIgnored var ircFailurePending = false
+  @ObservationIgnored var ircReconnectCount = 0
+  @ObservationIgnored var ircLastRecoveryReason: String?
   var channel: String?
   var hasSentJoin = false
   var hasCapAck = false
@@ -319,6 +326,9 @@ final class ChatService {
     kickStatusMessage = nil
     syncWarmupStart = Date()
     connection.resetBackoff()
+    ircReconnectCount = 0
+    ircLastRecoveryReason = nil
+    let session = sessionID
 
     // Channel change: drop the freshly-irrelevant ingest snapshot and clear the
     // process-global chat line caches so a new channel doesn't render against the
@@ -327,15 +337,13 @@ final class ChatService {
     ChatService.clearLineCaches()
     ChatService.installMemoryPressureObserverIfNeeded()
 
-    connection.connect(to: endpoint)
-
-    sendIRCHandshake()
+    openIRCConnection()
     installLifecycleObservers()
 
     Task { [weak self] in
       guard let self else { return }
       let catalog = await EmoteCatalogService.shared.catalog(for: normalized)
-      guard self.channel == normalized else { return }
+      guard self.sessionID == session else { return }
       self.emoteURLs = catalog
       self.requestRetokenize()
     }
@@ -343,14 +351,14 @@ final class ChatService {
     Task { [weak self] in
       guard let self else { return }
       let catalog = await BadgeCatalogService.shared.catalog(for: normalized)
-      guard self.channel == normalized else { return }
+      guard self.sessionID == session else { return }
       self.badgeURLs = catalog
     }
 
     Task { [weak self] in
       guard let self else { return }
       let catalog = await CheermoteCatalogService.shared.catalog(for: normalized)
-      guard self.channel == normalized else { return }
+      guard self.sessionID == session else { return }
       self.cheermotes = catalog
       self.requestRetokenize()
     }
@@ -362,6 +370,12 @@ final class ChatService {
 
   /// Tear down the connection and clear the buffer.
   func disconnect() {
+    sessionID = UUID()
+    ircTransportID = UUID()
+    ircHealthTask?.cancel()
+    ircHealthTask = nil
+    ircHealth = nil
+    ircFailurePending = false
     removeLifecycleObservers()
     receiveTask?.cancel()
     receiveTask = nil
@@ -369,6 +383,7 @@ final class ChatService {
     stopYouTubeLoop(clearStatus: true)
     stopKickLoop(clearStatus: true)
     isConnected = false
+    pendingRaid = nil
     messages.removeAll()
     pendingAppends.removeAll()
     appendFlushScheduled = false
@@ -405,7 +420,11 @@ final class ChatService {
       center.addObserver(
         forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main
       ) { [weak self] _ in
-        MainActor.assumeIsolated { self?.backgroundedAt = Date() }
+        MainActor.assumeIsolated {
+          self?.backgroundedAt = Date()
+          self?.ircHealthTask?.cancel()
+          self?.ircHealthTask = nil
+        }
       },
       center.addObserver(
         forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main
@@ -437,7 +456,10 @@ final class ChatService {
   private func handleWillEnterForeground() {
     guard channel != nil, let leftAt = backgroundedAt else { return }
     backgroundedAt = nil
-    guard Date().timeIntervalSince(leftAt) >= staleAfterBackgroundSeconds else { return }
+    guard Date().timeIntervalSince(leftAt) >= staleAfterBackgroundSeconds else {
+      if let socket = connection.currentTask { startIRCHealthWatchdog(socket: socket) }
+      return
+    }
     reconnectTransports()
   }
 
@@ -451,11 +473,9 @@ final class ChatService {
     connection.cancel()
     connection.resetBackoff()
     isConnected = false
-    hasSentJoin = false
-    hasCapAck = false
-
-    connection.connect(to: endpoint)
-    sendIRCHandshake()
+    ircReconnectCount += 1
+    ircLastRecoveryReason = "foreground"
+    openIRCConnection()
     receiveTask = Task { [weak self] in await self?.receiveLoop() }
 
     // The merge paths ride their own transports (Kick's Pusher socket, YouTube's

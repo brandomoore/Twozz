@@ -238,9 +238,8 @@ extension PlayerView {
       focusRecoveryTask?.cancel()
       chatSyncSendClearTask?.cancel()
       outgoingRaidFollowTask?.cancel()
-      softPauseTask?.cancel()
-      trackpadScrollTask?.cancel()
-      chatHoldTask?.cancel()
+      chatExitFocusTask?.cancel()
+      model.resetChatReading()
       trackpad.stop()
       sleepTimerTask?.cancel()
       resetAltSourceWork()
@@ -323,8 +322,7 @@ extension PlayerView {
           revealControls(preferredFocus: .streamInfo)
         case .right:
           if !showChat {
-            showChat = true
-            chatReplayStartMessageID = chat.messages.suffix(chatReplayMessageCount).first?.id
+            toggleChatVisibility()
           }
           // Land on the chat composer (already mounted, so this sticks). Point
           // the row's default at the collapse button so a later move into the
