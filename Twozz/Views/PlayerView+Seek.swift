@@ -380,11 +380,12 @@ extension PlayerView {
   }
 
   /// Swap in a fresh AVPlayerItem for the same source to re-fetch the live edge.
-  /// Used when the viewer scrubs back to live: it restores the pre-rewind latency
-  /// that a seek can't reach (the seekable tail goes stale while watching from
-  /// history). The proxy retains the DVR buffers across the swap, so the rewind
+  /// Used when scrubbing back to live or returning after leaving at live: it
+  /// refreshes a seekable tail that went stale during rewind or suspension.
+  /// The proxy retains the DVR buffers across the swap, so the rewind
   /// window is preserved and the viewer can scrub back again immediately.
   func reloadToLiveEdge() {
+    scrubCommitTask?.cancel()
     guard let source = currentSourceURL else {
       // No known source to reload — fall back to a tail seek so we still resume.
       if let window = currentSeekWindow() {

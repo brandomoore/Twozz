@@ -97,6 +97,12 @@ extension PlayerView {
   }
 
   func followRaid(_ login: String) {
+    model.livePlaybackReturn = LivePlaybackReturnState()
+    pinnedToLive = true
+    isUserPaused = false
+    isScrubbing = false
+    scrubCommitTask?.cancel()
+    scrubTargetSeconds = nil
     chatExitFocusTask?.cancel()
     model.resetChatReading()
     chatReplayStartMessageID = nil

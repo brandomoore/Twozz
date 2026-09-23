@@ -506,11 +506,12 @@ extension PlayerView {
   /// is paused while the page is up, and its latency monitor + watchdog are
   /// suspended so the non-advancing playhead isn't mistaken for a stall.
   func presentChannelPage() {
+    model.beginPlaybackAbsence(.channelPage, isVOD: isVOD)
     hideTask?.cancel()
     focusRecoveryTask?.cancel()
     if !isVOD {
       stopPlaybackWatchdog()
-      stopLatencyMonitor()
+      stopLatencyMonitor(clearPlaybackIntent: false)
     }
     player.pause()
     channelPageTarget = ChannelPageTarget(
@@ -523,6 +524,8 @@ extension PlayerView {
   /// Resumes live playback once the channel page is dismissed — or switches to a
   /// different channel if the user picked one from the page's "More like this".
   func resumeAfterChannelPage() {
+    let restoreLive = model.endPlaybackAbsence(
+      .channelPage, isVOD: isVOD, isAtLiveEdge: isFollowingLiveEdge)
     if let login = pendingSwitchLogin {
       pendingSwitchLogin = nil
       followRaid(login)
@@ -534,13 +537,12 @@ extension PlayerView {
       focus = .offlineViewChannel
       return
     }
-    if isVOD {
-      player.play()
-    } else {
-      startPlayback()
-      startLatencyMonitor()
-      startPlaybackWatchdog()
-    }
+    resetPlaybackHealth()
+    recordPlaybackEvent(
+      "playback_returned", attributes: ["from": "channel_page"],
+      flags: ["restore_live": restoreLive, "still_away": model.livePlaybackReturn.isAway]
+    )
+    resumePlaybackAfterAbsence(restoreLive: restoreLive)
     if showControls {
       focus = .streamInfo
       scheduleHide()

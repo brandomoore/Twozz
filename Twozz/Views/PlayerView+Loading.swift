@@ -533,32 +533,41 @@ extension PlayerView {
     videoDecodeFrozenSince = nil
   }
 
-  /// Stop claiming the live edge when the app returns from the background.
-  ///
-  /// tvOS suspends the app moments after you leave it: playback stops where it
-  /// stood, so you come back exactly as far behind the broadcast as your trip
-  /// lasted. Nothing noticed. `pinnedToLive` is an intent — it stays set while
-  /// the player follows live and only the viewer's own rewinding clears it — so
-  /// the transport kept reading LIVE a minute behind the broadcast.
-  ///
-  /// We deliberately do **not** seek forward: coming back to exactly where you
-  /// left off is the useful behaviour (nothing is skipped, and the transport
-  /// offers the catch-up whenever you want it). Dropping the pin is what makes
-  /// the readout honest, and it also keeps the drift watchdog — which only
-  /// chases the edge while pinned — from quietly catching up on its own.
+  /// Restore live-following after suspension without overriding a deliberate
+  /// pause/rewind. Rebuild the item: seeking the old tail can still land behind
+  /// because that playlist stopped refreshing while the app was suspended.
   func handleReturnToForeground() {
     guard let leftAt = backgroundedAt else { return }
     backgroundedAt = nil
     resetPlaybackHealth()
     let backgroundDuration = Date().timeIntervalSince(leftAt)
-    guard backgroundDuration >= liveResumeBehindThresholdSeconds else { return }
-    guard !isVOD, pinnedToLive, !isUserPaused, !isScrubbing else { return }
-    if showLatencyDiagnostics { logDiagnosticsEvent("left live edge (resumed behind)") }
+    let restoreLive = model.endPlaybackAbsence(
+      .background, isVOD: isVOD, isAtLiveEdge: isFollowingLiveEdge)
     recordPlaybackEvent(
-      "left_live_edge_after_resume",
-      metrics: ["background_duration_seconds": backgroundDuration]
+      "playback_returned",
+      attributes: ["from": "background"],
+      metrics: ["background_duration_seconds": backgroundDuration],
+      flags: ["restore_live": restoreLive, "still_away": model.livePlaybackReturn.isAway]
     )
-    pinnedToLive = false
+    resumePlaybackAfterAbsence(restoreLive: restoreLive)
+  }
+
+  func resumePlaybackAfterAbsence(restoreLive: Bool) {
+    guard !isOffline, !isSleeping, backgroundedAt == nil, channelPageTarget == nil,
+      !model.livePlaybackReturn.isAway else { return }
+    if shouldPlayAltSource, !vodHandoffTransitionInFlight {
+      if isVOD {
+        resumePlayback()
+      } else if restoreLive {
+        reloadToLiveEdge()
+      } else {
+        startPlayback()
+      }
+    }
+    if !isVOD {
+      if latencyTask == nil { startLatencyMonitor() }
+      if playbackWatchdogTask == nil { startPlaybackWatchdog() }
+    }
     updateRewindReadout()
   }
 

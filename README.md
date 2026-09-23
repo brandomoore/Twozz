@@ -186,6 +186,12 @@ When you return to a stream, Twozz restarts its stall-detection window rather
 than counting time spent in the background as a freeze. An empty buffer or
 expired playlist triggers a live-status check and recovery, not a "stream ended"
 verdict: that message requires Twitch to confirm the channel is offline.
+Leaving while following live also preserves that intent: returning from the
+background or a channel page refreshes the current source to its live position,
+rather than leaving playback paused at the old point. Brief trips that remain
+near live avoid an unnecessary reload. Deliberate pauses, rewinds, and VOD
+positions are preserved. "LIVE" means the source's playable live position,
+including its normal buffering margin, not zero broadcast/network latency.
 
 Chat's timed read pause releases its frozen snapshot when the countdown ends;
 collapsing chat or changing channels also resets scrolling state. The live list

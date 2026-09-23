@@ -123,6 +123,7 @@ extension PlayerView {
     .onReceive(
       NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)
     ) { _ in
+      model.beginPlaybackAbsence(.background, isVOD: isVOD)
       backgroundedAt = Date()
       recordPlaybackEvent("app_backgrounded")
       recordPlaybackTelemetrySnapshot()
@@ -234,6 +235,8 @@ extension PlayerView {
       probeOfflineIfStreamEnded()
     }
     .onDisappear {
+      model.livePlaybackReturn = LivePlaybackReturnState()
+      backgroundedAt = nil
       hideTask?.cancel()
       focusRecoveryTask?.cancel()
       chatSyncSendClearTask?.cancel()

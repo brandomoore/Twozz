@@ -180,6 +180,7 @@ final class PlayerModel {
   var scrubCommitTask: Task<Void, Never>?
   /// True while the playhead is following the live edge (drives the LIVE pin).
   var pinnedToLive = true
+  @ObservationIgnored var livePlaybackReturn = LivePlaybackReturnState()
   /// Selected VOD playback rate, reapplied across pause/resume/seek (live is 1.0).
   var vodPlaybackRate: Float = 1.0
 
@@ -269,6 +270,25 @@ final class PlayerModel {
   /// foreground. Drives the live-edge catch-up on return; see
   /// `PlayerView.handleReturnToForeground()`.
   var backgroundedAt: Date?
+
+  func beginPlaybackAbsence(
+    _ absence: LivePlaybackReturnState.Absence, isVOD: Bool, now: Date = Date()
+  ) {
+    livePlaybackReturn.leave(absence, followingLive: canFollowLiveOnReturn(isVOD: isVOD), now: now)
+  }
+
+  func endPlaybackAbsence(
+    _ absence: LivePlaybackReturnState.Absence, isVOD: Bool, isAtLiveEdge: Bool, now: Date = Date()
+  ) -> Bool {
+    livePlaybackReturn.returnFrom(
+      absence, canFollowLive: canFollowLiveOnReturn(isVOD: isVOD),
+      isAtLiveEdge: isAtLiveEdge, now: now)
+  }
+
+  private func canFollowLiveOnReturn(isVOD: Bool) -> Bool {
+    !isVOD && pinnedToLive && !isUserPaused && !isScrubbing && scrubTargetSeconds == nil
+      && !vodHandoffTransitionInFlight && !isSleeping && !isOffline
+  }
 
   func beginChatSoftPause(messages: [ChatMessage], seconds: Int, now: Date = Date()) {
     cancelChatSoftPause()
