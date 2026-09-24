@@ -258,6 +258,60 @@ final class TwitchWatchRewardsAPITests: XCTestCase {
     do { _ = try await api.validate("token", expectedUserID: "viewer"); XCTFail() }
     catch { XCTAssertEqual(error as? TwitchWatchRewardsAPI.Failure, .accountMismatch) }
   }
+
+  func testZeroLifetimeIsValidAndPositiveLifetimeKeepsItsDeadline() async throws {
+    for lifetime in [0, 3600] {
+      let scenario = WatchRewardsScenario()
+      await scenario.setValidation(lifetime: lifetime)
+      let api = TwitchWatchRewardsAPI(load: { await scenario.load($0) })
+      let startedAt = Date()
+      let credential = try await api.validate("test-token", expectedUserID: "viewer")
+      if lifetime == 0 {
+        XCTAssertNil(credential.expiresAt)
+      } else {
+        let expiresAt = try XCTUnwrap(credential.expiresAt)
+        XCTAssertGreaterThanOrEqual(expiresAt, startedAt.addingTimeInterval(3600))
+        XCTAssertLessThanOrEqual(expiresAt, Date().addingTimeInterval(3600))
+      }
+      let requests = await scenario.requests
+      XCTAssertEqual(requests.map(\.url?.path), ["/oauth2/validate", "/gql"])
+    }
+  }
+
+  func testNegativeLifetimeCannotConnect() async {
+    let scenario = WatchRewardsScenario()
+    await scenario.setValidation(lifetime: -1)
+    let api = TwitchWatchRewardsAPI(load: { await scenario.load($0) })
+    do { _ = try await api.validate("test-token", expectedUserID: "viewer"); XCTFail() }
+    catch { XCTAssertEqual(error as? TwitchWatchRewardsAPI.Failure, .malformedResponse) }
+  }
+
+  func testZeroLifetimeDoesNotBypassPrivateIdentityChecks() async {
+    for status in [200, 401] {
+      let scenario = WatchRewardsScenario()
+      await scenario.setValidation(lifetime: 0)
+      let api = TwitchWatchRewardsAPI(load: { request in
+        if request.url?.host == "gql.twitch.tv" {
+          return (
+            Data(#"{"data":{"currentUser":{"id":"other-viewer"}}}"#.utf8),
+            HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }
+        return await scenario.load(request)
+      })
+      do { _ = try await api.validate("test-token", expectedUserID: "viewer"); XCTFail() }
+      catch {
+        XCTAssertEqual(
+          error as? TwitchWatchRewardsAPI.Failure,
+          status == 200 ? .accountMismatch : .unauthorized)
+      }
+    }
+  }
+
+  func testPreviouslyStoredFiniteExpiryRemainsDecodable() throws {
+    let data = Data(#"{"token":"test-token","userID":"viewer","login":"viewer","expiresAt":123}"#.utf8)
+    let credential = try JSONDecoder().decode(TwitchWatchRewardsAPI.Credential.self, from: data)
+    XCTAssertEqual(credential.expiresAt, Date(timeIntervalSinceReferenceDate: 123))
+  }
 }
 
 @MainActor
@@ -285,6 +339,13 @@ private actor WatchRewardsScenario {
   var rejectReports = false
   var blockStream = false
   var streamContinuation: CheckedContinuation<Void, Never>?
+  var validationLifetime = 3600
+  var validationStatus = 200
+
+  func setValidation(lifetime: Int, status: Int = 200) {
+    validationLifetime = lifetime
+    validationStatus = status
+  }
 
   func configure(rejectReports: Bool = false, blockStream: Bool = false) {
     self.rejectReports = rejectReports
@@ -314,7 +375,8 @@ private actor WatchRewardsScenario {
     case "/oauth2/token":
       body = #"{"access_token":"test-token"}"#
     case "/oauth2/validate":
-      body = "{\"client_id\":\"\(TwitchWatchRewardsAPI.clientID)\",\"user_id\":\"viewer\",\"login\":\"viewer\",\"expires_in\":3600}"
+      status = validationStatus
+      body = "{\"client_id\":\"\(TwitchWatchRewardsAPI.clientID)\",\"user_id\":\"viewer\",\"login\":\"viewer\",\"expires_in\":\(validationLifetime)}"
     case "/track":
       status = rejectReports ? 500 : 204
       body = ""
@@ -340,7 +402,7 @@ final class TwitchWatchRewardsIntegrationTests: XCTestCase {
   private let item = NSObject()
 
   private func savedSession(
-    _ scenario: WatchRewardsScenario, expiresAt: Date = Date().addingTimeInterval(3600)
+    _ scenario: WatchRewardsScenario, expiresAt: Date? = Date().addingTimeInterval(3600)
   ) throws -> (TwitchWatchRewardsSession, WatchRewardsMemoryStore, TwitchWatchRewardsAPI) {
     let api = TwitchWatchRewardsAPI(load: { await scenario.load($0) })
     let store = WatchRewardsMemoryStore()
@@ -511,6 +573,55 @@ final class TwitchWatchRewardsIntegrationTests: XCTestCase {
     session.disconnect()
     XCTAssertFalse(session.isConnected)
     XCTAssertNil(store.data)
+  }
+
+  func testNonExpiringSessionConnectsAndRevalidatesAfterRestore() async throws {
+    let scenario = WatchRewardsScenario()
+    await scenario.setValidation(lifetime: 0)
+    let api = TwitchWatchRewardsAPI(load: { await scenario.load($0) })
+    let store = WatchRewardsMemoryStore()
+    let session = TwitchWatchRewardsSession(api: api, store: store.store)
+    await session.connect(expectedUserID: "viewer")
+    XCTAssertTrue(session.isConnected)
+    XCTAssertNil(session.credential?.expiresAt)
+    XCTAssertNil(session.errorMessage)
+    XCTAssertEqual(store.writes, 1)
+
+    let restored = TwitchWatchRewardsSession(api: api, store: store.store)
+    XCTAssertTrue(restored.isConnected)
+    let credential = try await restored.validatedCredential(expectedUserID: "viewer")
+    XCTAssertNil(credential.expiresAt)
+    let requests = await scenario.requests
+    XCTAssertEqual(requests.filter { $0.url?.path == "/oauth2/validate" }.count, 2)
+    _ = try await restored.validatedCredential(expectedUserID: "viewer")
+    let cachedRequests = await scenario.requests
+    XCTAssertEqual(cachedRequests.count, requests.count)
+  }
+
+  func testRevokedNonExpiringSessionIsStillDisconnected() async throws {
+    let scenario = WatchRewardsScenario()
+    await scenario.setValidation(lifetime: 0, status: 401)
+    let (session, store, _) = try savedSession(scenario, expiresAt: nil)
+    do { _ = try await session.validatedCredential(expectedUserID: "viewer"); XCTFail() }
+    catch { XCTAssertEqual(error as? TwitchWatchRewardsAPI.Failure, .unauthorized) }
+    XCTAssertFalse(session.isConnected)
+    XCTAssertNil(store.data)
+    let requests = await scenario.requests
+    XCTAssertEqual(requests.map(\.url?.path), ["/oauth2/validate"])
+  }
+
+  func testRejectedNewConnectionDoesNotSendUserBackToSettings() async {
+    let scenario = WatchRewardsScenario()
+    await scenario.setValidation(lifetime: 0, status: 401)
+    let api = TwitchWatchRewardsAPI(load: { await scenario.load($0) })
+    let store = WatchRewardsMemoryStore()
+    let session = TwitchWatchRewardsSession(api: api, store: store.store)
+    await session.connect(expectedUserID: "viewer")
+    XCTAssertFalse(session.isConnected)
+    XCTAssertNil(store.data)
+    XCTAssertEqual(
+      session.errorMessage,
+      String(localized: "Twitch did not accept this rewards sign-in. Choose Try Again to request a new code."))
   }
 
   func testSecureStorageFailureCannotLookConnected() async {

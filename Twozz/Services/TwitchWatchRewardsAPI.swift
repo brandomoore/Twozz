@@ -10,7 +10,8 @@ struct TwitchWatchRewardsAPI: Sendable {
     let token: String
     let userID: String
     let login: String
-    let expiresAt: Date
+    /// Twitch TV sessions can have no scheduled expiry; they still require server revalidation.
+    let expiresAt: Date?
   }
 
   struct DeviceCode: Decodable, Equatable, Sendable {
@@ -112,7 +113,7 @@ struct TwitchWatchRewardsAPI: Sendable {
     guard identity.user_id == expectedUserID, !expectedUserID.isEmpty else {
       throw Failure.accountMismatch
     }
-    guard identity.expires_in > 0, !identity.login.isEmpty else { throw Failure.unauthorized }
+    guard identity.expires_in >= 0, !identity.login.isEmpty else { throw Failure.malformedResponse }
     struct CurrentUser: Decodable {
       struct User: Decodable { let id: String }
       let currentUser: User
@@ -122,7 +123,8 @@ struct TwitchWatchRewardsAPI: Sendable {
     guard viewer.currentUser.id == expectedUserID else { throw Failure.accountMismatch }
     return Credential(
       token: token, userID: identity.user_id, login: identity.login,
-      expiresAt: Date().addingTimeInterval(TimeInterval(identity.expires_in)))
+      expiresAt: identity.expires_in == 0
+        ? nil : Date().addingTimeInterval(TimeInterval(identity.expires_in)))
   }
 
   func stream(login: String, token: String) async throws -> Stream? {

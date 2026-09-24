@@ -105,7 +105,7 @@ final class TwitchWatchRewardsSession {
   func validatedCredential(expectedUserID: String) async throws -> TwitchWatchRewardsAPI.Credential {
     guard let saved = credential else { throw TwitchWatchRewardsAPI.Failure.unauthorized }
     guard saved.userID == expectedUserID else { throw TwitchWatchRewardsAPI.Failure.accountMismatch }
-    guard saved.expiresAt > Date() else {
+    if let expiresAt = saved.expiresAt, expiresAt <= Date() {
       invalidate()
       throw TwitchWatchRewardsAPI.Failure.unauthorized
     }
@@ -135,8 +135,12 @@ final class TwitchWatchRewardsSession {
   }
 
   private func report(_ error: Error) {
-    errorMessage = error.localizedDescription
-    Self.logger.error("Watch rewards error: \(error.localizedDescription, privacy: .public)")
+    if isConnecting, error as? TwitchWatchRewardsAPI.Failure == .unauthorized {
+      errorMessage = String(localized: "Twitch did not accept this rewards sign-in. Choose Try Again to request a new code.")
+    } else {
+      errorMessage = error.localizedDescription
+    }
+    Self.logger.error("Watch rewards error: \(self.errorMessage ?? "", privacy: .public)")
   }
 }
 

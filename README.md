@@ -231,7 +231,9 @@ milestone is shown as awaiting Twitch, never as a locally invented streak.
 An accepted watch report is **not** proof that Twitch credited it: eligibility
 and streak updates remain Twitch's decision. The integration can stop working
 if Twitch changes its private endpoints; errors are surfaced instead of
-silently claiming success. Expired rewards sessions require reconnecting.
+silently claiming success. Twitch TV sessions may have no scheduled expiry
+(`expires_in: 0`); Twozz still validates them on first use after launch and
+hourly during viewing. Expired or revoked rewards sessions require reconnecting.
 
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports
 can be examined after the fact. Logging samples playback state about every two
