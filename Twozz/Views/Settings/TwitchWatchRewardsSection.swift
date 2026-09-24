@@ -12,12 +12,13 @@ struct TwitchWatchRewardsSection: View {
     VStack(alignment: .leading, spacing: 18) {
       Text("Twitch Watch Streaks")
         .font(.title3.weight(.semibold))
-      Text("Experimental. Connect separately to report real Twitch viewing and read your watch streak. Twitch decides when viewing qualifies; credit is not guaranteed.")
-        .font(.callout)
-        .foregroundStyle(.secondary)
       if let credential = session.credential {
         Text("Connected as \(credential.login)")
           .font(.callout)
+      } else if environment.auth.isAuthenticated {
+        Text("Connect to track your Twitch watch streaks.")
+          .font(.callout)
+          .foregroundStyle(.secondary)
       }
       if let error = session.errorMessage {
         Text(error)
@@ -30,19 +31,19 @@ struct TwitchWatchRewardsSection: View {
           .foregroundStyle(.secondary)
       }
       HStack(spacing: 24) {
-        Button(session.isConnected ? "Reconnect Watch Rewards" : "Connect Watch Rewards") {
+        Button(session.isConnected ? "Reconnect" : "Connect") {
           showConnect = true
         }
         .disabled(!environment.auth.isAuthenticated)
         if session.isConnected {
-          Button("Disconnect Watch Rewards", role: .destructive) {
+          Button("Disconnect", role: .destructive) {
             showDisconnect = true
           }
         }
       }
       .font(.headline)
       .settingsProminentActionButtonStyle()
-      Text("Only the playing Twitch stream is reported. In multiview, only the selected audio pane counts. No bonus claims or chat announcements are sent.")
+      Text("Experimental. Twitch determines viewing credit.")
         .font(.caption)
         .foregroundStyle(.secondary)
     }
@@ -57,7 +58,7 @@ struct TwitchWatchRewardsSection: View {
       Button("Disconnect", role: .destructive) { session.disconnect() }
       Button("Cancel", role: .cancel) {}
     } message: {
-      Text("Removes this Apple TV's saved rewards connection. Your normal Twitch login is unchanged.")
+      Text("Your normal Twitch sign-in stays connected.")
     }
   }
 }
@@ -74,9 +75,9 @@ private struct TwitchWatchRewardsSignInView: View {
       LinearGradient(colors: palette.backgroundColors, startPoint: .top, endPoint: .bottom)
         .ignoresSafeArea()
       VStack(spacing: 28) {
-        Text("Connect Twitch Watch Rewards")
+        Text("Connect Watch Streaks")
           .font(.title.weight(.bold))
-        Text("Use the same Twitch account as Twozz. This unofficial connection uses Twitch's TV sign-in and stores its session only in this Apple TV's Keychain.")
+        Text("Use the same Twitch account as Twozz.")
           .font(.callout)
           .foregroundStyle(.secondary)
           .multilineTextAlignment(.center)
@@ -85,7 +86,7 @@ private struct TwitchWatchRewardsSignInView: View {
           HStack(spacing: 72) {
             BrandQRCodeView(
               payload: url.absoluteString, logoName: "twitch-logo",
-              moduleColor: palette.liftPrimaryText, size: 330)
+              moduleColor: palette.liftPrimaryText, backgroundColor: palette.liftSurface, size: 330)
             VStack(spacing: 24) {
               Text("Scan with your phone, or visit")
               Text("twitch.tv/activate")

@@ -6,7 +6,7 @@ import UIKit
 /// theme-aware card. Shared by the Twitch and YouTube sign-in screens so both
 /// pages render an identical, on-brand code.
 ///
-/// Both the card and the QR's own background follow the active `ThemePalette`
+/// By default, both the card and the QR's own background follow the active `ThemePalette`
 /// (white in Light, dark in Dark/OLED), so the code blends into the page
 /// instead of sitting on a hardcoded white tile. The brand-color modules stay
 /// fully saturated against that background, and the code keeps "H" error
@@ -19,6 +19,8 @@ struct BrandQRCodeView: View {
   /// Color applied to the dark QR modules, matching the inset logo's brand
   /// color (e.g. Twitch purple, YouTube red). Defaults to black.
   var moduleColor: Color = .black
+  /// Optional contrasting surface paired with `moduleColor` from the palette.
+  var backgroundColor: Color?
   /// Side length of the QR image inside the card.
   var size: CGFloat = 500
 
@@ -26,7 +28,7 @@ struct BrandQRCodeView: View {
 
   /// Theme surface painted behind the code (and as the QR's own background),
   /// so the card respects the active theme instead of always being white.
-  private var surface: Color { palette.cardOpaqueSurface }
+  private var surface: Color { backgroundColor ?? palette.cardOpaqueSurface }
 
   var body: some View {
     qrContent
