@@ -1,4 +1,11 @@
 {
-  "generatedAt": "2026-09-24T17:26:30.040Z",
-  "streams": {}
+  "generatedAt": "2026-09-24T20:39:40.726Z",
+  "streams": {
+    "UCujyjxsq5FZNVnQro51zKSQ": {
+      "live": true,
+      "viewers": 1779,
+      "videoId": "9WcjTthXpKc",
+      "title": "RUST ISLES DAY ONE!"
+    }
+  }
 }
