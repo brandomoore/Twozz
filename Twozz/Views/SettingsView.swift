@@ -260,6 +260,7 @@ private struct SettingsPaneDetail: View {
             onRequestSignIn: onRequestSignIn,
             onAccountChanged: onAccountChanged
           )
+          TwitchWatchRewardsSection()
           SettingsYouTubeAccountSection(
             onRequestYouTubeSignIn: onRequestYouTubeSignIn,
             onAccountChanged: onAccountChanged

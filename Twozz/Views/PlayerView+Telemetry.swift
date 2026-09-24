@@ -118,6 +118,10 @@ extension PlayerView {
     snapshot.flags["video_output_observed"] = model.playbackTelemetry.videoFrameAge != nil
     snapshot.metrics["video_frame_age_seconds"] = model.playbackTelemetry.videoFrameAge
     snapshot.flags["using_alt_source"] = isUsingAltSource
+    snapshot.attributes["watch_rewards_state"] = model.watchTracker.state.rawValue
+    snapshot.counters["watch_rewards_reports_accepted"] = model.watchTracker.acceptedReports
+    snapshot.counters["watch_rewards_streak"] = model.watchTracker.streak
+    snapshot.counters["watch_rewards_observed_increases"] = model.watchTracker.observedStreakIncreases
     snapshot.flags["low_latency_proxy_enabled"] = lowLatencyProxyEnabled
     snapshot.flags["stream_rewind_enabled"] = streamRewindEnabled
     snapshot.flags["chat_visible"] = showChat

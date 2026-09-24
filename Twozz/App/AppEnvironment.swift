@@ -22,6 +22,7 @@ import Foundation
 final class AppEnvironment {
   /// Twitch account / OAuth session.
   let auth = TwitchAuthSession()
+  let watchRewards = TwitchWatchRewardsSession()
   /// The viewer's followed channels (live + offline) and their liveness.
   let follows = FollowedChannelsService()
   /// Anonymous "popular / top streams" recommendations and categories.

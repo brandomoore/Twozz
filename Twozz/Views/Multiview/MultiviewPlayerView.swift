@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftUI
 
 /// Plays up to four live channels at once. The tvOS focus engine selects one
@@ -24,6 +25,9 @@ struct MultiviewPlayerView: View {
   @Environment(\.dismiss) private var dismiss
   @Environment(\.themePalette) private var palette
   @Environment(\.glassDisabled) private var glassDisabled
+  @Environment(\.scenePhase) private var scenePhase
+  @Environment(AppEnvironment.self) private var environment
+  @State private var watchTracker = TwitchWatchTracker()
   @State private var controller: MultiviewController
   @FocusState private var focus: MultiviewFocusTarget?
   /// Drives the auto-hiding focused-pane metadata: true right after any focus
@@ -125,6 +129,7 @@ struct MultiviewPlayerView: View {
     }
     .onChange(of: focus) { _, newValue in
       if case let .pane(id) = newValue {
+        if controller.audiblePaneID != id { watchTracker.stop() }
         lastPaneID = id
         controller.setAudiblePane(id)
         // If the focus engine moved back down into a pane, retire the HUD.
@@ -144,10 +149,22 @@ struct MultiviewPlayerView: View {
       }
     }
     .onDisappear {
+      watchTracker.stop()
       chromeHideTask?.cancel()
       hintHideTask?.cancel()
       controller.teardown()
     }
+    .task {
+      while !Task.isCancelled {
+        updateWatchRewards()
+        do { try await Task.sleep(for: .seconds(1)) }
+        catch { break }
+      }
+      watchTracker.stop()
+    }
+    .onChange(of: scenePhase) { _, _ in updateWatchRewards() }
+    .onChange(of: escalatedChannel?.id) { _, _ in watchTracker.stop() }
+    .onChange(of: showingAddPicker) { _, _ in watchTracker.stop() }
     .onExitCommand {
       if showingControls {
         hideControls()
@@ -173,6 +190,24 @@ struct MultiviewPlayerView: View {
   }
 
   // MARK: Controls
+
+  private func updateWatchRewards() {
+    guard scenePhase == .active, escalatedChannel == nil, !showingAddPicker,
+      auth.isAuthenticated, let userID = auth.userID,
+      let pane = controller.panes.first(where: { $0.id == controller.audiblePaneID }),
+      let item = pane.player.currentItem else {
+      watchTracker.stop()
+      return
+    }
+    let playback = TwitchWatchPlayback(
+      target: .init(channel: pane.channel.login, userID: userID, itemID: ObjectIdentifier(item)),
+      uptime: ProcessInfo.processInfo.systemUptime, playhead: item.currentTime().seconds,
+      rate: Double(pane.player.rate),
+      ready: item.status == .readyToPlay && !pane.isLoading && !pane.hasError,
+      playing: pane.player.timeControlStatus == .playing,
+      muted: pane.player.isMuted || pane.player.volume == 0)
+    watchTracker.update(playback, session: environment.watchRewards)
+  }
 
   /// A circular play/pause badge mirroring the Siri Remote's button — a play
   /// triangle and pause bars side by side inside a ring — so the hint reads as

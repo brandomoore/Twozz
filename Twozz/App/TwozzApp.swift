@@ -19,6 +19,9 @@ struct TwozzApp: App {
     WindowGroup {
       HomeView(deepLinkRouter: deepLinkRouter)
         .environment(environment)
+        .onChange(of: environment.auth.userID) { _, userID in
+          environment.watchRewards.accountChanged(to: userID)
+        }
         .onOpenURL { url in
           deepLinkRouter.handle(url)
         }
@@ -27,4 +30,3 @@ struct TwozzApp: App {
     }
   }
 }
-

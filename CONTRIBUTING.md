@@ -141,12 +141,11 @@ This project is non-commercial and ad-respecting.
 ## Things Twozz intentionally does not do
 
 - **Auto-redeem channel points.** Twozz won't auto-claim channel points (the way
-  the 7TV/FFZ browser extensions do). Twitch's official login that Twozz uses
-  isn't accepted by the private API that claims points — that API only trusts a
-  real twitch.tv web-session login. Supporting it would mean adding a second
-  login where you type your Twitch password into the app and storing a
-  full-account session token, plus fighting Twitch's anti-bot checks. It's also
-  against Twitch's Terms of Service.
+  the 7TV/FFZ browser extensions do). The optional watch-rewards connection
+  reports only real playback and reads Twitch's streak state; it never claims
+  bonuses or redeems rewards. It is separate from the app's normal OAuth login,
+  which Twitch rejects on its private rewards API. Authentication happens on
+  Twitch's own device-activation page, not through an in-app password form.
 - **Follow / unfollow.** Twozz can show who you follow, but Twitch now blocks
   follow/unfollow mutations from this app context with integrity checks. Use the
   official Twitch app or website to change follows.

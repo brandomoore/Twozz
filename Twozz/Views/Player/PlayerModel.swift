@@ -21,6 +21,7 @@ final class PlayerModel {
   // MARK: Chat & events
 
   let chat = ChatService()
+  let watchTracker = TwitchWatchTracker()
 
   /// Twitch login -> Kick slug overrides for streamers whose Kick name differs
   /// from their Twitch login and isn't derivable from their profile.

@@ -85,6 +85,7 @@ extension PlayerView {
   /// setup and teardown, and stall / end-of-stream recovery.
   func playbackLifecycleHandlers(_ content: some View) -> some View {
     content
+    .task { await monitorWatchRewards() }
     .task {
       if activeChannel.isEmpty { activeChannel = channel }
       if isVOD {
@@ -112,6 +113,7 @@ extension PlayerView {
       trackpad.start()
     }
     .onReceive(player.publisher(for: \.timeControlStatus).receive(on: RunLoop.main)) { _ in
+      updateWatchRewards()
       // Read the current item/status rather than a queued notification's value,
       // which can belong to an item that was replaced in the meantime.
       guard model.revealPlaybackIfStarted() else { return }
@@ -125,6 +127,7 @@ extension PlayerView {
     ) { _ in
       model.beginPlaybackAbsence(.background, isVOD: isVOD)
       backgroundedAt = Date()
+      updateWatchRewards()
       recordPlaybackEvent("app_backgrounded")
       recordPlaybackTelemetrySnapshot()
       resetPlaybackHealth()
@@ -235,6 +238,7 @@ extension PlayerView {
       probeOfflineIfStreamEnded()
     }
     .onDisappear {
+      model.watchTracker.stop()
       model.livePlaybackReturn = LivePlaybackReturnState()
       backgroundedAt = nil
       hideTask?.cancel()

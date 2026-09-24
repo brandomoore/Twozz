@@ -209,6 +209,30 @@ delay and its release task wakes for the earliest pending message. Foreground
 return also rechecks pending deadlines, so an old pre-suspension sync delay
 cannot hold newer chat behind a sleeping task.
 
+### Twitch watch streaks (experimental)
+
+In **Settings > Accounts > Twitch Watch Streaks**, connect watch rewards using
+the same Twitch account as your normal Twozz login. This is a separate,
+unofficial Twitch TV device-code connection: approve it on Twitch's activation
+page using your phone. Twozz never asks for your password. The rewards session
+is stored in a device-only Keychain item, not in preferences or the Top Shelf
+shared container. Disconnecting removes the saved rewards session from the TV;
+it does not sign out your normal account or revoke other Twitch sessions.
+
+When connected, Twozz reports one minute only after observing a minute of
+advancing, visible Twitch live playback. Pauses, buffering, seeking, background
+time, previews, YouTube playback, and VODs do not count. In multiview, only the
+selected audio pane is reported; opening the full player stops reporting the
+underlying grid. Changing channels or player items starts a fresh measurement.
+It does not farm unseen channels, claim point bonuses, or share announcements.
+
+The player controls show the watch-streak count returned by Twitch. A missing
+milestone is shown as awaiting Twitch, never as a locally invented streak.
+An accepted watch report is **not** proof that Twitch credited it: eligibility
+and streak updates remain Twitch's decision. The integration can stop working
+if Twitch changes its private endpoints; errors are surfaced instead of
+silently claiming success. Expired rewards sessions require reconnecting.
+
 Twozz keeps a bounded, local JSONL playback log in its app cache so lag reports
 can be examined after the fact. Logging samples playback state about every two
 seconds and records noteworthy state changes, stalls, access/error-log updates,
@@ -216,7 +240,9 @@ seeks, and recovery actions. It is diagnostic observation only; enabling it does
 not change playback tuning. Samples also include chat connection/read-pause
 flags, message-buffer counts, time since the last IRC frame, and reconnect
 counts/reasons, current sync delay, and queued release/wake deadlines; they do
-not include chat text or chat participants.
+not include chat text or chat participants. Watch-rewards diagnostics record
+report acknowledgements and server-returned streak counts, never access tokens
+or activation codes.
 
 Pull the retained logs from the paired Apple TV and summarize the current or
 most recent session:

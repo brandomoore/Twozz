@@ -7,6 +7,11 @@ import UIKit
 extension PlayerView {
   var bottomOverlay: some View {
     VStack(spacing: 18) {
+      if !isVOD && !isUsingAltSource && model.watchTracker.state != .idle {
+        TwitchWatchStreakStatusView(tracker: model.watchTracker)
+          .frame(maxWidth: .infinity, alignment: .leading)
+      }
+
       if rewindAvailable {
         Button {
           toggleRewindPlayPause()
