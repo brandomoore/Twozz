@@ -10,13 +10,13 @@ struct TwitchWatchRewardsSection: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 18) {
-      Text("Twitch Watch Streaks")
+      Text("Twitch Rewards")
         .font(.title3.weight(.semibold))
       if let credential = session.credential {
         Text("Connected as \(credential.login)")
           .font(.callout)
       } else if environment.auth.isAuthenticated {
-        Text("Connect to track your Twitch watch streaks.")
+        Text("Connect for watch streaks, polls, and channel rewards.")
           .font(.callout)
           .foregroundStyle(.secondary)
       }
@@ -43,6 +43,12 @@ struct TwitchWatchRewardsSection: View {
       }
       .font(.headline)
       .settingsProminentActionButtonStyle()
+      if session.isConnected {
+        Toggle("Collect watch bonuses", isOn: Binding(
+          get: { session.autoClaimBonuses },
+          set: { session.autoClaimBonuses = $0 }))
+          .font(.callout)
+      }
       Text("Experimental. Twitch determines viewing credit.")
         .font(.caption)
         .foregroundStyle(.secondary)
@@ -75,7 +81,7 @@ private struct TwitchWatchRewardsSignInView: View {
       LinearGradient(colors: palette.backgroundColors, startPoint: .top, endPoint: .bottom)
         .ignoresSafeArea()
       VStack(spacing: 28) {
-        Text("Connect Watch Streaks")
+        Text("Connect Twitch Rewards")
           .font(.title.weight(.bold))
         Text("Use the same Twitch account as Twozz.")
           .font(.callout)

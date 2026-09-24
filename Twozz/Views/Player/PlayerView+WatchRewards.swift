@@ -1,7 +1,50 @@
 import AVFoundation
+import SwiftUI
 import UIKit
 
 extension PlayerView {
+  func rewardsPresentation(_ content: some View) -> some View {
+    content
+      .disabled(showRewards)
+      .overlay(alignment: .trailing) {
+        if showRewards {
+          TwitchChannelRewardsView(
+            rewards: model.watchTracker.channelRewards,
+            session: environment.watchRewards, events: hermes,
+            onClose: closeRewards)
+            .frame(width: 680)
+            .padding(36)
+            .environment(\.themePalette, palette)
+            .environment(\.colorScheme, palette.chromeColorScheme)
+        }
+      }
+      .onChange(of: isUsingAltSource) { _, _ in
+        if showRewards { closeRewards() }
+        updateWatchRewards()
+      }
+      .onChange(of: isVOD) { _, _ in
+        if showRewards { closeRewards() }
+        updateWatchRewards()
+      }
+      .onChange(of: auth.userID) { _, _ in
+        if showRewards { closeRewards() }
+        updateWatchRewards()
+      }
+      .onChange(of: showStillWatching) { _, shown in
+        if shown { showRewards = false }
+      }
+      .onChange(of: isSleeping) { _, sleeping in
+        if sleeping { showRewards = false }
+        updateWatchRewards()
+      }
+  }
+
+  func closeRewards() {
+    showRewards = false
+    focus = isUsingAltSource || isVOD ? .quality : .rewards
+    scheduleHide()
+  }
+
   func monitorWatchRewards() async {
     while !Task.isCancelled {
       updateWatchRewards()

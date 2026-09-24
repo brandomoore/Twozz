@@ -209,9 +209,9 @@ delay and its release task wakes for the earliest pending message. Foreground
 return also rechecks pending deadlines, so an old pre-suspension sync delay
 cannot hold newer chat behind a sleeping task.
 
-### Twitch watch streaks (experimental)
+### Twitch rewards and polls (experimental)
 
-In **Settings > Accounts > Twitch Watch Streaks**, connect watch rewards using
+In **Settings > Accounts > Twitch Rewards**, connect watch rewards using
 the same Twitch account as your normal Twozz login. This is a separate,
 unofficial Twitch TV device-code connection: approve it on Twitch's activation
 page using your phone. Twozz never asks for your password. The rewards session
@@ -224,7 +224,23 @@ advancing, visible Twitch live playback. Pauses, buffering, seeking, background
 time, previews, YouTube playback, and VODs do not count. In multiview, only the
 selected audio pane is reported; opening the full player stops reporting the
 underlying grid. Changing channels or player items starts a fresh measurement.
-It does not farm unseen channels, claim point bonuses, or share announcements.
+It does not farm unseen channels or share announcements.
+
+The gift button in the live Twitch player opens **Polls & Rewards** without
+leaving the video. View your channel-point balance, cast one free vote in the
+current poll, or redeem streamer rewards, highlighted messages, and random,
+chosen, or modified emote unlocks. Each redemption requires confirmation;
+Twozz rechecks the current price, availability, and balance before submitting.
+Bits purchases, paid poll votes, predictions, and sub-only-message redemptions
+are not supported. Rewards marked **Available on Twitch** cannot be redeemed
+from Twozz.
+
+**Collect watch bonuses** is enabled with the rewards connection and can be
+turned off in Accounts. It claims only Twitch-provided bonuses during observed,
+advancing playback, using the same visibility and multiview rules above.
+Opening the rewards menu alone never claims a bonus or spends points.
+Balances and successful actions come from Twitch acknowledgements, not local
+estimates. If a result is unconfirmed, check Twitch before retrying.
 
 The player controls show the watch-streak count returned by Twitch. A missing
 milestone is shown as awaiting Twitch, never as a locally invented streak.

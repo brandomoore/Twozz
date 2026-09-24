@@ -116,8 +116,8 @@ enum InteractiveMoment: Equatable {
 /// signed out and for *any* channel — unlike the official EventSub poll/
 /// prediction subscriptions, which require the broadcaster's own authorization.
 ///
-/// Read-only: there is no public (or private, low-risk) viewer API to *vote*, so
-/// this never writes.
+/// This event transport is read-only. Optional authenticated voting is handled
+/// separately by TwitchChannelRewards.
 @MainActor
 @Observable
 final class HermesEventService {
@@ -131,7 +131,7 @@ final class HermesEventService {
   private(set) var viewerCount: Int?
 
   // Per-kind displayable state (drives `currentMoment` via `recompute()`).
-  private var poll: LivePoll?
+  private(set) var poll: LivePoll?
   private var prediction: LivePrediction?
   private var hypeTrain: LiveHypeTrain?
   private var goal: LiveGoal?

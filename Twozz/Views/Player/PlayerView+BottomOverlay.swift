@@ -157,7 +157,7 @@ extension PlayerView {
               try? await Task.sleep(for: .milliseconds(40))
               guard !Task.isCancelled else { return }
               await MainActor.run {
-                guard showControls, !showChatSettings, !isQualityMenuPresented else { return }
+                guard showControls, !showChatSettings, !showRewards, !isQualityMenuPresented else { return }
                 guard !showStillWatching, !isSleeping else { return }
                 guard focus == nil || focus == .quality else { return }
                 focus = .quality
@@ -207,6 +207,22 @@ extension PlayerView {
         .focused($focus, equals: .quality)
         .onMoveCommand { direction in
           if direction == .up { requestSeekBarFocus() }
+        }
+
+        if !isUsingAltSource {
+          Button {
+            hideTask?.cancel()
+            focusRecoveryTask?.cancel()
+            showRewards = true
+          } label: {
+            Icon(glyph: .giftFilled)
+          }
+          .accessibilityLabel("Polls and channel rewards")
+          .focusRemoved(controlButtonRemoved(.rewards))
+          .focused($focus, equals: .rewards)
+          .onMoveCommand { direction in
+            if direction == .up { requestSeekBarFocus() }
+          }
         }
         }
 
@@ -281,7 +297,7 @@ extension PlayerView {
     .onPreferenceChange(ControlButtonsHeightKey.self) { height in
       controlButtonsHeight = height
     }
-    // Treat the whole control row (avatar, quality, settings, chat toggle) as one
+    // Treat the whole control row (avatar, quality, rewards, settings, chat toggle) as one
     // focus section so tvOS keeps focus within it during fast trackpad swipes.
     // Without this, when chat is open the adjacent chat pane (composer, message
     // list) offers competing focus targets and a quick swipe can fling focus out of
@@ -483,7 +499,7 @@ extension PlayerView {
           scheduleHide()
           return
         }
-        if isQualityMenuPresented {
+        if isQualityMenuPresented || showRewards {
           scheduleHide()
           return
         }
@@ -559,7 +575,7 @@ extension PlayerView {
 
   func isControlFocus(_ focus: Focusable) -> Bool {
     switch focus {
-    case .streamInfo, .quality, .chatToggle, .chatInput, .rewindScrubber:
+    case .streamInfo, .quality, .rewards, .chatToggle, .chatInput, .rewindScrubber:
       return true
     default:
       return false

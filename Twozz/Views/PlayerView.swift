@@ -169,6 +169,7 @@ struct PlayerView: View {
   // chatReplayStartMessageID now lives in PlayerModel.
   @State var showSignInSheet = false
   @State var showChatSettings = false
+  @State var showRewards = false
   @State var chatSettingsPage: ChatSettingsPage = .main
   /// Natural (content) height of the current settings page, used to size the
   /// floating panel to its content and animate when the page/content changes.
@@ -593,7 +594,7 @@ struct PlayerView: View {
   // its `focusTag`, and must be registered in that allow-list — otherwise tvOS
   // can't land focus on it and traps on a neighbor.
   enum Focusable: Hashable {
-    case video, streamInfo, quality, chatToggle, chatInput, errorBack
+    case video, streamInfo, quality, rewards, chatToggle, chatInput, errorBack
     case offlineViewChannel, offlineTryAgain
     case chatSend
     /// VOD-only: invisible target inside the chat pane that holds focus while the
@@ -909,7 +910,7 @@ struct PlayerView: View {
     let withChannel = channelChangeHandlers(withToggles)
     let withPipeline = playbackPipelineHandlers(withChannel)
     let withCaptions = captionSyncHandlers(withPipeline)
-    return withCaptions
+    return rewardsPresentation(withCaptions)
     .fullScreenCover(isPresented: $showSignInSheet) {
       SignInView(auth: auth)
     }

@@ -52,14 +52,14 @@ extension PlayerView {
 
   /// Control-row buttons in left-to-right visual order. Drives the row-membership
   /// check below.
-  var controlOrder: [Focusable] { [.streamInfo, .quality, .chatSettingsButton, .chatToggle] }
+  var controlOrder: [Focusable] { [.streamInfo, .quality, .rewards, .chatSettingsButton, .chatToggle] }
 
   func isControlRowButton(_ f: Focusable?) -> Bool {
     guard let f else { return false }
     return controlOrder.contains(f)
   }
 
-  /// Whether `button` is dropped from the focus engine right now. All four control
+  /// Whether `button` is dropped from the focus engine right now. The control
   /// buttons are natively focusable together so tvOS's focus engine moves focus
   /// between them instantly and reliably on every press (no programmatic stepping,
   /// no throttle, no dropped or delayed moves). They are removed *only* while chat

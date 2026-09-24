@@ -221,7 +221,7 @@ struct TwitchWatchRewardsAPI: Sendable {
     let error: String?
   }
 
-  private func graphQL<Value: Decodable>(_ body: [String: Any], token: String) async throws -> Value {
+  func graphQL<Value: Decodable>(_ body: [String: Any], token: String) async throws -> Value {
     var request = TwitchAPIClient.graphQLRequest(clientID: Self.clientID)
     request.setValue("OAuth \(token)", forHTTPHeaderField: "Authorization")
     request.httpBody = try JSONSerialization.data(withJSONObject: body)

@@ -42,8 +42,8 @@ struct MomentDockStyle: Equatable {
 
 // Passive, read-only banners that surface live interactive moments (polls,
 // predictions, hype trains, creator goals) for the channel being watched, so
-// couch viewers don't miss them. Non-interactive by design: Twitch exposes no
-// viewer-side API to vote, and these never take focus or steal input.
+// couch viewers don't miss them. These banners never steal focus; optional
+// poll voting lives in the player's rewards panel.
 extension PlayerView {
   /// Whether the given interactive moment should be surfaced, per the user's
   /// per-event visibility toggles (Events sub-page of chat settings).
@@ -58,8 +58,7 @@ extension PlayerView {
 
   /// Docked above the chat list (see `chatPane`): surfaces the current live
   /// interactive moment sharing the chat's width and surface treatment. Passive
-  /// and non-interactive — Twitch exposes no viewer-side API to vote, and this
-  /// never takes focus or steals input.
+  /// and non-interactive; voting is a deliberate action in the rewards panel.
   @ViewBuilder
   func dockedInteractiveMoment(_ moment: InteractiveMoment, style: MomentDockStyle) -> some View {
     let glass = style.surface == .glass

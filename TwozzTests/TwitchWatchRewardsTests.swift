@@ -388,6 +388,8 @@ private actor WatchRewardsScenario {
       } else if requestBody.contains("TwozzWatchStream") {
         if blockStream { await withCheckedContinuation { streamContinuation = $0 } }
         body = "{\"data\":{\"user\":{\"id\":\"channel-id\",\"stream\":{\"id\":\"\(broadcastID)\"}}}}"
+      } else if requestBody.contains("ChannelPointsContext") {
+        body = #"{"data":{"community":{"channel":{"id":"channel-id","self":{"communityPoints":{"balance":0}},"communityPointsSettings":{"isEnabled":true,"customRewards":[],"automaticRewards":[],"emoteVariants":[]}}}}}"#
       } else {
         body = "{\"data\":{\"channel\":{\"self\":{\"watchStreakMilestone\":{\"watchStreakMilestone\":{\"value\":\"\(streak)\"}}}}}}"
       }

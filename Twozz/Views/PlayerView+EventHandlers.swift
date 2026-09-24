@@ -274,7 +274,9 @@ extension PlayerView {
   func remoteCommandHandlers(_ content: some View) -> some View {
     content
     .onExitCommand {
-      if isSleeping {
+      if showRewards {
+        closeRewards()
+      } else if isSleeping {
         wakeFromSleep()
       } else if isChatScrolling || chatSoftPauseRemaining != nil {
         // Deliberate exit from a chat scroll: land focus on the composer (live)
@@ -295,6 +297,7 @@ extension PlayerView {
       }
     }
     .onMoveCommand { direction in
+      guard !showRewards else { return }
       // While actively scrolling with the chrome hidden, route every directional
       // input through the scroll handler (and swallow horizontal) so a stray
       // swipe can't surface the chrome and bump you out of the scroll.
@@ -353,6 +356,7 @@ extension PlayerView {
   func focusManagementHandler(_ content: some View) -> some View {
     content
     .onChange(of: focus) { oldFocus, newFocus in
+      guard !showRewards else { return }
       // Disarm the chat-input hop the moment focus is back on a control button, so
       // the composer drops out of the engine again and a plain swipe can't reach it.
       if isControlRowButton(newFocus), chatInputArmed {
@@ -481,7 +485,7 @@ extension PlayerView {
           try? await Task.sleep(for: .milliseconds(140))
           guard !Task.isCancelled else { return }
           await MainActor.run {
-            guard showControls, !showChatSettings, !isQualityMenuPresented else { return }
+            guard showControls, !showChatSettings, !showRewards, !isQualityMenuPresented else { return }
             guard focus == nil else { return }
             focus = target
           }
@@ -513,6 +517,8 @@ extension PlayerView {
   func channelChangeHandlers(_ content: some View) -> some View {
     content
     .onChange(of: activeChannel) { _, _ in
+      showRewards = false
+      model.watchTracker.stop()
       // A manual override is scoped to the channel it was entered for; clear it
       // when the channel changes (e.g. following a raid) so it can't leak.
       experimentalYouTubeMergeChannelOrURL = ""

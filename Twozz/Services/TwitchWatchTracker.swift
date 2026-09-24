@@ -28,6 +28,15 @@ struct TwitchWatchPlayback: Equatable {
       && !userPaused && !seeking && !sleeping
       && rate.isFinite && rate > 0 && playhead.isFinite && uptime.isFinite
   }
+
+  func observedSeconds(since previous: Self) -> TimeInterval? {
+    guard eligible, previous.eligible, target == previous.target else { return nil }
+    let elapsed = uptime - previous.uptime
+    let advanced = playhead - previous.playhead
+    guard elapsed > 0, elapsed <= 3, advanced > 0,
+      advanced <= max(3, elapsed * max(rate, previous.rate) * 1.5) else { return nil }
+    return min(elapsed, advanced)
+  }
 }
 
 /// Accumulates observed playback, never elapsed wall time across a suspension or a seek.
@@ -47,11 +56,8 @@ struct TwitchWatchTime {
     }
     defer { previous = sample }
     guard let previous else { return false }
-    let elapsed = sample.uptime - previous.uptime
-    let advanced = sample.playhead - previous.playhead
-    guard elapsed > 0, elapsed <= 3, advanced > 0,
-      advanced <= max(3, elapsed * max(sample.rate, previous.rate) * 1.5) else { return false }
-    seconds += min(elapsed, advanced)
+    guard let observed = sample.observedSeconds(since: previous) else { return false }
+    seconds += observed
     guard seconds >= 60 else { return false }
     seconds -= 60
     return true
@@ -61,6 +67,7 @@ struct TwitchWatchTime {
 @MainActor
 @Observable
 final class TwitchWatchTracker {
+  let channelRewards: TwitchChannelRewards
   enum State: String { case idle, paused, watching, unavailable }
   private(set) var state: State = .idle
   private(set) var streak: Int?
@@ -78,7 +85,10 @@ final class TwitchWatchTracker {
   @ObservationIgnored private let api: TwitchWatchRewardsAPI
   private static let logger = Logger(subsystem: "com.thatcube.Twozz", category: "WatchRewards")
 
-  init(api: TwitchWatchRewardsAPI = TwitchWatchRewardsAPI()) { self.api = api }
+  init(api: TwitchWatchRewardsAPI = TwitchWatchRewardsAPI()) {
+    self.api = api
+    channelRewards = TwitchChannelRewards(api: api)
+  }
 
   func update(
     _ playback: TwitchWatchPlayback?,
@@ -95,6 +105,7 @@ final class TwitchWatchTracker {
       return
     }
     if current?.target != playback.target { stop() }
+    channelRewards.update(playback, session: session, recorder: recorder)
     current = playback
     let earnedMinute = clock.sample(playback)
     guard playback.eligible else {
@@ -167,6 +178,7 @@ final class TwitchWatchTracker {
   }
 
   func stop() {
+    channelRewards.stop()
     cancelRequest()
     current = nil
     clock = TwitchWatchTime()

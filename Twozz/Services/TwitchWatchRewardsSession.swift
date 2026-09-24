@@ -11,16 +11,26 @@ final class TwitchWatchRewardsSession {
   private(set) var isConnecting = false
   private(set) var errorMessage: String?
   var isConnected: Bool { credential != nil }
+  var autoClaimBonuses: Bool {
+    didSet { preferences.set(autoClaimBonuses, forKey: PersistenceKey.autoClaimWatchBonuses) }
+  }
 
   @ObservationIgnored private var generation = UUID()
   @ObservationIgnored private var validatedAt: Date?
   @ObservationIgnored private let api: TwitchWatchRewardsAPI
   @ObservationIgnored private let store: TwitchWatchRewardsStore
+  @ObservationIgnored private let preferences: UserDefaults
   private static let logger = Logger(subsystem: "com.thatcube.Twozz", category: "WatchRewards")
 
-  init(api: TwitchWatchRewardsAPI = TwitchWatchRewardsAPI(), store: TwitchWatchRewardsStore = .keychain) {
+  init(
+    api: TwitchWatchRewardsAPI = TwitchWatchRewardsAPI(),
+    store: TwitchWatchRewardsStore = .keychain,
+    preferences: UserDefaults = .standard
+  ) {
     self.api = api
     self.store = store
+    self.preferences = preferences
+    autoClaimBonuses = preferences.object(forKey: PersistenceKey.autoClaimWatchBonuses) as? Bool ?? true
     do {
       if let data = try store.read() {
         credential = try JSONDecoder().decode(TwitchWatchRewardsAPI.Credential.self, from: data)
