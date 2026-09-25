@@ -93,6 +93,8 @@ final class ChatService {
   var messages: [ChatMessage] = []
   var isConnected = false
   private(set) var emoteURLs: [String: URL] = [:]
+  private(set) var emoteCatalogNeedsRetry = false
+  @ObservationIgnored var emoteCatalogTask: Task<Void, Never>?
   private(set) var badgeURLs: [String: URL] = [:]
   private(set) var cheermotes: [Cheermote] = []
   private(set) var condensedMessagesCount = 0
@@ -273,6 +275,31 @@ final class ChatService {
     restartYouTubeLoopIfNeeded()
   }
 
+  func startEmoteCatalogLoading(
+    for channel: String, catalog: EmoteCatalogService = .shared,
+    wait: @escaping @Sendable () async throws -> Void = { try await Task.sleep(for: .seconds(60)) }
+  ) {
+    emoteCatalogTask?.cancel()
+    let session = sessionID
+    emoteCatalogTask = Task { [weak self] in
+      while !Task.isCancelled {
+        let result = await catalog.snapshot(for: channel, refreshChannelEmotes: true)
+        guard !Task.isCancelled, let self, self.sessionID == session else { return }
+        self.emoteCatalogNeedsRetry = result.needsRetry
+        // Keep known emotes during a provider outage; a complete refresh also
+        // removes aliases that the channel no longer has enabled.
+        let urls = result.needsRetry
+          ? self.emoteURLs.merging(result.urls) { _, new in new } : result.urls
+        if urls != self.emoteURLs {
+          self.emoteURLs = urls
+          self.requestRetokenize()
+        }
+        do { try await wait() }
+        catch { return }
+      }
+    }
+  }
+
   func configureExperimentalKickMerge(enabled: Bool, channelOrURL: String) {
     kickMergeEnabled = enabled
     kickChannelOrURL = channelOrURL.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -343,13 +370,7 @@ final class ChatService {
     openIRCConnection()
     installLifecycleObservers()
 
-    Task { [weak self] in
-      guard let self else { return }
-      let catalog = await EmoteCatalogService.shared.catalog(for: normalized)
-      guard self.sessionID == session else { return }
-      self.emoteURLs = catalog
-      self.requestRetokenize()
-    }
+    startEmoteCatalogLoading(for: normalized)
 
     Task { [weak self] in
       guard let self else { return }
@@ -374,6 +395,9 @@ final class ChatService {
   /// Tear down the connection and clear the buffer.
   func disconnect() {
     sessionID = UUID()
+    emoteCatalogTask?.cancel()
+    emoteCatalogTask = nil
+    emoteCatalogNeedsRetry = false
     ircTransportID = UUID()
     ircHealthTask?.cancel()
     ircHealthTask = nil

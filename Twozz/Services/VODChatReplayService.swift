@@ -82,14 +82,22 @@ final class VODChatReplayService {
 
     if let login = channelLogin?.lowercased(), !login.isEmpty {
       catalogTask = Task { [weak self] in
-        async let emotes = EmoteCatalogService.shared.catalog(for: login)
+        async let emotes = EmoteCatalogService.shared.snapshot(for: login, refreshChannelEmotes: true)
         async let badges = BadgeCatalogService.shared.catalog(for: login)
         async let cheers = CheermoteCatalogService.shared.catalog(for: login)
         let (resolvedEmotes, resolvedBadges, resolvedCheers) = await (emotes, badges, cheers)
         guard let self, !Task.isCancelled, self.vodID == vodID else { return }
-        self.emoteURLs = resolvedEmotes
+        self.emoteURLs = resolvedEmotes.urls
         self.badgeURLs = resolvedBadges
         self.cheermotes = resolvedCheers
+        while !Task.isCancelled {
+          do { try await Task.sleep(for: .seconds(60)) }
+          catch { return }
+          let updated = await EmoteCatalogService.shared.snapshot(for: login, refreshChannelEmotes: true)
+          guard !Task.isCancelled, self.vodID == vodID else { return }
+          self.emoteURLs = updated.needsRetry
+            ? self.emoteURLs.merging(updated.urls) { _, new in new } : updated.urls
+        }
       }
     }
 

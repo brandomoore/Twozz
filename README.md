@@ -209,6 +209,13 @@ delay and its release task wakes for the earliest pending message. Foreground
 return also rechecks pending deadlines, so an old pre-suspension sync delay
 cannot hold newer chat behind a sleeping task.
 
+While a channel is open, its 7TV emote set is rechecked every minute, including
+during VOD chat replay. Newly added emotes update messages already on screen.
+Successful provider catalogs are cached separately; failed requests are retried
+without discarding known emotes or caching an outage as an empty catalog.
+Playback diagnostics include catalog size and pending-retry state, not emote
+names or chat text.
+
 ### Twitch rewards and polls (experimental)
 
 In **Settings > Accounts > Twitch Rewards**, connect watch rewards using

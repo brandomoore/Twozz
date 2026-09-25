@@ -129,6 +129,8 @@ extension PlayerView {
     snapshot.flags["chat_reading"] = chatIsFrozen
     snapshot.flags["chat_frozen_snapshot"] = chatFrozenMessages != nil
     snapshot.counters["chat_messages"] = chat.messages.count
+    snapshot.counters["chat_emote_catalog_entries"] = chat.emoteURLs.count
+    snapshot.flags["chat_emote_catalog_retry_pending"] = chat.emoteCatalogNeedsRetry
     snapshot.counters["chat_frozen_messages"] = chatFrozenMessages?.count ?? 0
     snapshot.counters["chat_pending_sync"] = chat.pendingSyncMessageCount
     snapshot.flags["chat_sync_enabled"] = chat.chatSyncEnabled
